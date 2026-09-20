@@ -746,6 +746,60 @@ const RACK_ANCHOR_REACH: float = 82.0
 const RACK_EXTENT: float = 1.25
 
 # ============================================================================
+# THE PARKED BIKES (bead `godot-test1-z2yv.9`)
+# ============================================================================
+#
+# Owner ruling 8, 2026-09-20: "2-3 CUBE bike silhouettes at every rack (chunk
+# content, inside the family's batch slice, no footprint of their own — inside
+# the rack's)". A parked bike never moves, so it IS chunk content and goes
+# through `create_box` like the rack itself — never a MeshInstance3D per rack.
+# The ridden bike (a generated .glb) is a different object and never appears.
+#
+# ONE BIKE PER HOOP, hence 3: a bike stands PERPENDICULAR to the rail — its two
+# wheels fore and aft across it, the frame spanning them, the saddle toward one
+# end on alternating sides per slot — so two slots never overlap in X however
+# close the hoops stand. The third is not clutter by construction. (That is the
+# geometry argument for 3 over 2; a screenshot is not possible headless, so the
+# in-game read is the owner's — this const is the whole of that change.)
+#
+# THE ±0.5 m WHEEL SPAN THE BEAD SKETCHES DOES NOT FIT THE FOOTPRINT: a 0.7 m
+# wheel at a corner hoop (1.1 m out) reaches 1.41 m radially, past the
+# persisted RACK_RADIUS 1.4 the spawners read. The span below is ±0.45 m, so
+# the farthest wheel corner stands at 1.385 m — every wheel and frame corner
+# stays inside the rack's own circle, which is the bound acceptance 3 asserts
+# literally. Raising the span means raising RACK_RADIUS, which is persisted
+# state and the owner's call, not this bead's.
+#
+# CONSTANT PALETTE, NO DRAW AT ALL: the slot's tint is a dispatch on the hoop
+# index — dispatch costs no draw (CLAUDE.md) — never a roll. The boxes are
+# placed from the rack's site and the hoop offsets, which are already known,
+# AFTER the rack's last draw so every existing box lands where it did.
+# `create_box` still draws its discarded ramp/roughness values from the
+# family's private fixed-seed builder rng — that function's contract, and
+# unobservable (every family colour is an override) — but no tint, no offset
+# and no choice here costs a draw in any stream: R1's rack counts and
+# chunk_stream_selfcheck print the same numbers before and after.
+#
+# VISUAL-ONLY (`collide = false`): the rail and the hoops already block, and
+# paint appends no shape — check 1's shape equation holds with bikes standing
+# in the chunk, and R1/R3 keep counting rail + upright shapes only.
+const PARKED_BIKES_PER_RACK: int = 3
+## Two 0.7 m wheel plates, thin in X: the discs stand perpendicular to the rail.
+const PARKED_BIKE_WHEEL_DIMS := Vector3(0.06, 0.7, 0.7)
+const PARKED_BIKE_WHEEL_Y: float = 0.35
+## Fore/aft half-span of the wheel pair — ±0.45 m, see the footprint note above.
+const PARKED_BIKE_WHEEL_HALF_SPAN: float = 0.45
+## The frame bar, 1.0 m long, yawed PI/2 at build so it spans the wheel pair.
+const PARKED_BIKE_FRAME_DIMS := Vector3(1.0, 0.08, 0.06)
+const PARKED_BIKE_FRAME_Y: float = 0.55
+## Saddle/bar lump, toward one wheel — alternating ends per slot.
+const PARKED_BIKE_SADDLE_DIMS := Vector3(0.2, 0.06, 0.1)
+const PARKED_BIKE_SADDLE_Y: float = 0.85
+const PARKED_BIKE_SADDLE_END: float = 0.3
+## One silhouette tint per slot, all three from this family's own consts.
+const PARKED_BIKE_COLORS: Array[Color] = [BIKE_STRIP_COLOR, BIKE_DASH_COLOR, BIKE_POLE_COLOR]
+
+# ============================================================================
 # THE HEADING RECURRENCE — the shipped walk's turn math, kept for the trunks
 # ============================================================================
 
@@ -2289,6 +2343,9 @@ static func _build_rack(terrain: Node3D, anchor_index: int, site: Vector2,
 	everything else, so the boxes land inside the family's
 	batch_start/batch_count slice. The marker carries the WORLD position: it
 	outlives any one chunk's frame and the rental epic must not re-derive it.
+	Plus PARKED_BIKES_PER_RACK four-CUBE parked-bike silhouettes (bead
+	`godot-test1-z2yv.9`), one per hoop after the uprights: visual-only, no
+	footprint, constant palette — the const block carries the why.
 	"""
 	var at: Vector2 = site - centre
 	terrain.create_box(
@@ -2305,6 +2362,31 @@ static func _build_rack(terrain: Node3D, anchor_index: int, site: Vector2,
 				Vector3(RACK_UPRIGHT_WIDTH, RACK_UPRIGHT_HEIGHT, RACK_UPRIGHT_DEPTH),
 				0.0, rng, block_batch, block_body, 0.0, RACK_COLOR, true,
 				ChunkBatch.BoxKind.CUBE)
+		cube_cursor += 1
+	# THE PARKED BIKES (bead `godot-test1-z2yv.9`): one four-CUBE silhouette per
+	# hoop, AFTER the rack's last draw so every existing box lands where it did.
+	# Perpendicular to the rail on alternating sides, constant palette, no
+	# footprint of their own — the const block carries the geometry argument.
+	for b in PARKED_BIKES_PER_RACK:
+		var hx: float = at.x - RACK_RAIL_LENGTH * 0.5 \
+				+ RACK_RAIL_LENGTH * float(b) / float(maxi(1, PARKED_BIKES_PER_RACK - 1))
+		var side: float = 1.0 if b % 2 == 0 else -1.0
+		var tint: Color = PARKED_BIKE_COLORS[b % PARKED_BIKE_COLORS.size()]
+		for w in [-1.0, 1.0]:
+			terrain.create_box(
+					Vector3(hx, PARKED_BIKE_WHEEL_Y, at.y + w * PARKED_BIKE_WHEEL_HALF_SPAN),
+					PARKED_BIKE_WHEEL_DIMS, 0.0, rng, block_batch, block_body, 0.0,
+					tint, false, ChunkBatch.BoxKind.CUBE)
+			cube_cursor += 1
+		terrain.create_box(
+				Vector3(hx, PARKED_BIKE_FRAME_Y, at.y),
+				PARKED_BIKE_FRAME_DIMS, PI * 0.5, rng, block_batch, block_body, 0.0,
+				tint, false, ChunkBatch.BoxKind.CUBE)
+		cube_cursor += 1
+		terrain.create_box(
+				Vector3(hx, PARKED_BIKE_SADDLE_Y, at.y + side * PARKED_BIKE_SADDLE_END),
+					PARKED_BIKE_SADDLE_DIMS, 0.0, rng, block_batch, block_body, 0.0,
+					tint, false, ChunkBatch.BoxKind.CUBE)
 		cube_cursor += 1
 	# NON-CLIMBABLE, like the poles: a stand has no top to stand on.
 	obstacles.append({
