@@ -2565,6 +2565,9 @@ const PEDAL_LEAN_DEG: float = 15.0
 const PEDAL_ARM_EPS_DEG: float = 5.0
 const PEDAL_REST_EPS: float = 0.01
 const PEDAL_LEAK_EPS: float = 0.001
+## Walk-to-seat equality: a stride's torso residue is 0.05+ rad while float
+## noise sits near 1e-7, so 1e-4 leaves three orders of margin on both sides.
+const PEDAL_SEAT_EPS: float = 0.0001
 ## The head must travel forward (-Z, the way the heroes face) by this in
 ## skeleton space when the seat leans in — a 15° lean over ~0.35 m of
 ## spine-to-head, so about a third of the expected travel.
@@ -2661,6 +2664,11 @@ func _check_pedal(player: Node3D) -> void:
 	    lesson). Compared against a FRESH fixture that never pedalled: a
 	    baseline read through a rest that SKIPS the spine would be dirty by
 	    construction, so the oracle is the exported rest, not the last one.
+	(7) THE SEAT FROM A WALK: sixty running frames, then sit through the
+	    shipped animation path — limbs, head and the whole torso read what
+	    the from-rest seat reads, to 1e-4. The stride soils pelvis, spine,
+	    chest and clavicles; the seat settles them first, or the pose
+	    remembers the last walking frame.
 	(6) DISPATCH: on a stub player the seat outranks the whole chain — riding
 	    and airborne still pedals, riding and moving never walks — and with
 	    the flag down the walk frame is the old walk frame, number for
@@ -2868,6 +2876,49 @@ func _check_pedal(player: Node3D) -> void:
 			if gap_all > PEDAL_LEAK_EPS:
 				_fail("pedal probe: %s bone %s rests %.5f rad off after seat+rest — want %.4f"
 						% [hero, key, gap_all, PEDAL_LEAK_EPS])
+
+		# --- (7) THE SEAT FROM A WALK: no frozen torso. ---
+		# Sixty running frames, then sit: the seat must equal the from-rest
+		# seat on every bone it owns — pelvis, spine, chest and clavicles
+		# included, the four soils the stride leaves behind that neither the
+		# roll reset nor the gait relax touches. Driven through the SHIPPED
+		# animation path (`animate_walking`, then `animate_pedalling`), not
+		# the driver directly, so the transition the mount will draw is the
+		# one measured. Body keys are the caller's, not the seat's (one
+		# pedalling frame only starts the ride down to the saddle), so the
+		# comparison holds the limbs, the head and the torso.
+		anim._gait = PlayerAnimation.gait_for(hero)
+		var ride_step: float = 1.0 / 60.0
+		var ride_clock: float = 2.3
+		anim.animation_time = ride_clock - 60.0 * ride_step
+		for i: int in 60:
+			anim.animation_time += ride_step
+			anim.animate_walking(ride_step, 1.5)
+		anim.animate_pedalling(ride_step)
+		var rode_m: Dictionary = rig.measure()
+		var rode_axes: Dictionary = {}
+		var seat_bones: Array[String] = ["pelvis", "spine_02", "spine_03", "clavicle_l", "clavicle_r"]
+		for bone: String in seat_bones:
+			for axis: int in [0, 1, 2]:
+				rode_axes[bone + ":" + str(axis)] = rig._axis(bone, axis)
+		rig.rest_pose()
+		anim.animation_time = ride_clock
+		anim.animate_pedalling(ride_step)
+		var sat_m: Dictionary = rig.measure()
+		if sat_m.has("head_z"):
+			if absf(float(rode_m["head_z"]) - float(sat_m["head_z"])) > PEDAL_SEAT_EPS:
+				_fail("pedal probe: %s head walks-to-seat vs from-rest — the seat must not remember the stride" % hero)
+		for key: String in limb_keys:
+			if absf(float(rode_m[key]) - float(sat_m[key])) > PEDAL_SEAT_EPS:
+				_fail("pedal probe: %s %s walks-to-seat %.5f vs from-rest %.5f — the seat must not remember the stride"
+					% [hero, key, float(rode_m[key]), float(sat_m[key])])
+		for bone: String in seat_bones:
+			for axis: int in [0, 1, 2]:
+				var rode: float = float(rode_axes[bone + ":" + str(axis)])
+				var sat: float = rig._axis(bone, axis)
+				if absf(rode - sat) > PEDAL_SEAT_EPS:
+					_fail("pedal probe: %s torso %s:%d walks-to-seat %.5f vs from-rest %.5f — a frozen %s"
+						% [hero, bone, axis, rode, sat, bone])
 
 		fixture.queue_free()
 	if heroes != 4:

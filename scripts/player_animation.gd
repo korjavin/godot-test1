@@ -712,7 +712,9 @@ func animate_pedalling(delta: float) -> void:
 
 	The seat owns BOTH arm chains (hands on the bars) and the spine lean, so
 	this clears what the stride may have left the same way `sidestep_pose()`
-	does — roll snapped, pitch and head eased — and then draws the seat. The
+	does — roll snapped, pitch and head eased — and then draws the seat (the
+	rig itself settles torso and clavicles first — see `pedal()` — so the
+	mirror, which never runs this function, sits down clean too). The
 	ability overlays ride on top like on every other clocked path; with their
 	timers at zero they are no-ops and the bars keep the hands.
 

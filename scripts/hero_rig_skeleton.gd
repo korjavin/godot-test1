@@ -693,6 +693,15 @@ func pedal(phase: float, amount: float) -> void:
 	                caller's clock, so the legs oppose at PI apart.
 	@param amount: 0.0 leaves the pose untouched, 1.0 seats it fully.
 	"""
+	# THE TORSO FIRST. The stride soils the pelvis (drop/twist), the spine's
+	# counter-rotation, the chest's breath and the clavicles' swing, and none
+	# of the seats below rewrites those — a seat drawn over them would
+	# remember the last walking frame instead of being a pure function of
+	# (phase, amount). So the torso settles the way the other clocked seats
+	# do (`air`, `sidestep`), and both clavicle yaws ease back to rest with
+	# it, all at `amount` like the rest. The spine's lean is written after,
+	# over the settled triple.
+	_settle_torso(amount)
 	var hip: float = _deg("pedal_hip_deg")
 	var stroke: float = _deg("pedal_stroke_deg")
 	var knee: float = _deg("pedal_knee_deg")
@@ -710,6 +719,8 @@ func pedal(phase: float, amount: float) -> void:
 				lerp(_axis(UPPERARM[side], AXIS_X), _deg("pedal_arm_deg"), amount))
 		_set_axis(LOWERARM[side], AXIS_X,
 				lerp(_axis(LOWERARM[side], AXIS_X), _deg("elbow_bend_deg"), amount))
+		_set_axis(CLAVICLE[side], AXIS_Y,
+				lerp(_axis(CLAVICLE[side], AXIS_Y), 0.0, amount))
 	_set_axis(SPINE, AXIS_X,
 			lerp(_axis(SPINE, AXIS_X), -_deg("pedal_lean_deg"), amount))
 
