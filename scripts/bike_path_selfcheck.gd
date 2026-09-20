@@ -51,6 +51,21 @@ extends SceneTree
 ## 4's printout change meaning with the lanes; the kill switch, the CUBE rule
 ## and the marker-shape idiom are untouched.
 ##
+## ...and bead `godot-test1-pnvb.11` (one deterministic side-link per MILE
+## monument onto the nearest trunk station, gated >= 60 m walk and >= 40 m
+## paint) adds THREE of its own, each named for its acceptance line: L1 (the
+## emitted set IS the mile landmarks passing the gates — re-walked here
+## through the shipped walk, fails on zero links, and no link to an annulus
+## landmark with the annulus population as control), L2 (the named world tie:
+## one link's terminal station is the aimed-at lane station to the bit, and
+## its drawn strip box stands within 1 cm of the walk's midpoint), L3 (no
+## painted link piece under 40 m off the world's own markers, with the
+## gate-liveness control: >= 1 link skipped by a gate across the sweep).
+## A2 counts graph routes only; landmark-linked anchors get no rack (owner
+## ruling 2026-09-20 — a rack belongs where a player has a reason to be).
+## K is unchanged: the kill switch, the zero-draws purity and the CUBE rule
+## already ride the same spawner, slice and private generator for links.
+##
 ## ...and bead `godot-test1-z2yv.3` — the bike-stand rack at every NETWORK ANCHOR
 ## a trunk touches — adds THREE of its own after C4: R1 (exactly one rack per
 ## touched anchor across the field, every marker within `RACK_ANCHOR_REACH` of
@@ -617,6 +632,12 @@ func _run() -> void:
 	_check_lane_world_tie(terrain_script)
 	_check_bike_deck_clear_of_road(terrain_script)
 	_check_pass_gap(terrain_script)
+	# --- BEAD `godot-test1-pnvb.11`, the monument side-links: L1 (the emitted
+	# set is the mile landmarks passing the gates), L2 (the named world tie),
+	# L3 (no painted link piece under 40 m). Keep that list true.
+	_check_monument_links(terrain_script)
+	_check_monument_link_world_tie(terrain_script)
+	_check_monument_link_lengths(terrain_script)
 	# --- BEAD `godot-test1-z2yv.3`, the anchor racks: R1 (one rack per touched
 	# anchor), R2 (the `bike_stand` contract), R3 (the world tie), R4 (the
 	# rack's own clearance radius).
@@ -668,7 +689,9 @@ func _run() -> void:
 				+ "the chunk's batch stands within a stated distance of its anchor, "
 				+ "with the footprint asked in the rack's own radius, and every "
 				+ "rack carries its parked-bike CUBE silhouettes inside its own "
-				+ "footprint and slice, byte-identical across builds")
+				+ "footprint and slice, byte-identical across builds, every mile "
+				+ "monument passing the gates grows its side-link onto the nearest "
+				+ "trunk station to the bit and paints no piece under 40 m")
 		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
@@ -4718,7 +4741,14 @@ func _check_trunk_shape(terrain_script: GDScript) -> void:
 	"""
 	for run_seed: int in SWEEP16:
 		var terrain: Node3D = _terrain(terrain_script, run_seed, true)
-		var trunks: Array[Dictionary] = BikePaths.trunks(terrain)
+		# GRAPH ROUTES ONLY: the monument side-links (bead godot-test1-pnvb.11)
+		# are short driveways by design, and counting them here would fail the
+		# through-route shape for exactly the world the bead asked for. The
+		# links' own shape is L1/L3's subject, below.
+		var trunks: Array[Dictionary] = []
+		for row: Dictionary in BikePaths.trunks(terrain):
+			if not bool(row.get("link", false)):
+				trunks.append(row)
 		var waypoints: Array = terrain.waypoint_sites()
 		if trunks.size() < 3 or trunks.size() > 12:
 			_fail("A2: seed %d grows %d trunks, outside 3-12 — the network is a "
@@ -5158,6 +5188,379 @@ func _check_pass_gap(terrain_script: GDScript) -> void:
 	else:
 		print("D1: %d trunk segments over MOUNTAIN in the sweep, %d strip boxes matched, none on MOUNTAIN" % [gap_segs, strips])
 	Sentinel.done("pass_gap")
+
+
+# ============================================================================
+# CHECKS L1/L2/L3 — THE MONUMENT SIDE-LINKS (bead godot-test1-pnvb.11)
+# ============================================================================
+
+func _link_graph_stations(trunks: Array) -> Array:
+	"""The non-link rows' station lists, in memo order — the only stations a
+	monument link may aim at, so links never chain off each other."""
+	var out: Array = []
+	for trunk: Dictionary in trunks:
+		if bool(trunk.get("link", false)):
+			continue
+		out.append(trunk["stations"])
+	return out
+
+
+func _link_nearest(graph: Array, apos: Vector2) -> Vector2:
+	"""The nearest station over the graph routes, first-min wins.
+
+	THE SHIPPED RULE, RESTATED FOR THE AUDIT — and restated rather than read
+	off the link row on purpose: L1/L2 pick the target knowing nothing but the
+	monument and the graph, then assert the row matches. The iteration order
+	is the memo's both here and in `_trunk_monument_links`, so a tie breaks
+	the same way twice and the two answers must agree to the bit."""
+	var target: Vector2 = apos
+	var best: float = INF
+	for stations_v: Variant in graph:
+		for station: Dictionary in (stations_v as Array):
+			var d: float = apos.distance_to(station["pos"])
+			if d < best:
+				best = d
+				target = station["pos"]
+	return target
+
+
+func _link_walk_length(route: Array) -> float:
+	"""A walked route's length in metres, polyline order."""
+	var walk: float = 0.0
+	for i in range(route.size() - 1):
+		walk += ((route[i]["pos"] as Vector2).distance_to(route[i + 1]["pos"] as Vector2))
+	return walk
+
+
+func _check_monument_links(terrain_script: GDScript) -> void:
+	"""
+	L1 (bead godot-test1-pnvb.11) — THE EMITTED SET IS THE MILE LANDMARKS
+	PASSING THE GATES, over SWEEP16.
+
+	Per seed: every mile landmark (kind < `landmark_mile_slots()`) is re-walked
+	here through the SHIPPED `_trunk_route` against an independently picked
+	nearest station, and the two owner gates plus the lake scan are applied to
+	that re-walk — so the expected emitted set is derived, not read off the
+	implementation's report. It must equal the link rows' anchor set exactly:
+	a missing row is a driveway the world owes, an extra row is paint the gates
+	should have stopped. The row's own walk/painted measurements must match
+	the re-walk's, or the report is decorating numbers it did not earn.
+
+	Fails on zero emitted links across the sweep (a tier that built nothing
+	asserts nothing), and fails on ANY link to an annulus landmark — with the
+	CONTROL that at least one annulus row exists across the sweep, so the ban
+	was seen to bite. Prints the per-seed table the bead asks the PR to carry
+	(mile monuments / links emitted / skipped by each gate / painted
+	lengths) plus `trunks()`' cold cost per seed (K's perf half).
+	"""
+	var emitted_total: int = 0
+	var annulus_total: int = 0
+	for run_seed: int in SWEEP16:
+		var t0: int = Time.get_ticks_msec()
+		var terrain: Node3D = _terrain(terrain_script, run_seed, true)
+		var trunks: Array[Dictionary] = BikePaths.trunks(terrain)
+		var cold: int = Time.get_ticks_msec() - t0
+		var anchors: Array = terrain.bike_anchors()
+		var sites: Dictionary = terrain.landmark_sites()
+		var mile: int = terrain.landmark_mile_slots()
+		var waypoints: Array = terrain.waypoint_sites()
+		var graph: Array = _link_graph_stations(trunks)
+		var emitted := {}
+		for trunk: Dictionary in trunks:
+			if bool(trunk.get("link", false)):
+				emitted[int(trunk["a"])] = trunk
+		var want := {}
+		var mile_n: int = 0
+		var skip_walk: int = 0
+		var skip_paint: int = 0
+		var skip_other: int = 0
+		var paints: Array = []
+		for ai in anchors.size():
+			# KIND_LANDMARK by value, the B1 idiom: this check reads its
+			# subject directly.
+			if int(anchors[ai]["kind"]) != 4:
+				continue
+			var apos: Vector2 = anchors[ai]["pos"]
+			var home: Vector2i = terrain.world_to_chunk(Vector3(apos.x, 0.0, apos.y))
+			if not sites.has(home):
+				continue
+			var kind: int = int(sites[home])
+			if kind >= mile:
+				annulus_total += 1
+				if emitted.has(ai):
+					_fail("L1: seed %d link %d aims at anchor %d, an ANNULUS "
+							% [run_seed, int((emitted[ai] as Dictionary)["id"]), ai]
+							+ "landmark (kind %d >= mile %d) — the annulus is "
+							% [kind, mile] + "never linked (owner ruling 3)")
+				continue
+			mile_n += 1
+			var target: Vector2 = _link_nearest(graph, apos)
+			var reason: Array[String] = [""]
+			var synth: Array[Dictionary] = [
+					{"pos": apos, "kind": 4},
+					{"pos": target, "kind": 4},
+				]
+			var route: Array[Dictionary] = BikePaths._trunk_route(terrain, synth,
+					{"a": 0, "b": 1}, reason, ai)
+			if route.size() < BikePaths.TRUNK_MIN_STATIONS \
+					or (route[-1]["pos"] as Vector2) != target:
+				# Refused whole, or stopped at Budapest's rect edge short of
+				# its station: it ends nowhere a T can stand.
+				skip_other += 1
+				if emitted.has(ai):
+					_fail("L1: seed %d anchor %d (kind %d): the re-walk %s, yet "
+							% [run_seed, ai, kind, ("is refused (%s)" % reason[0])
+								if route.size() < BikePaths.TRUNK_MIN_STATIONS
+								else "stops short of its station"]
+							+ "link %d stands"
+							% int((emitted[ai] as Dictionary)["id"]))
+				continue
+			var walk: float = _link_walk_length(route)
+			if walk < BikePaths.TRUNK_LINK_MIN_WALK:
+				skip_walk += 1
+				if emitted.has(ai):
+					_fail("L1: seed %d anchor %d (kind %d): walk %.1f m, under "
+							% [run_seed, ai, kind, walk] + "the %.0f m gate, yet "
+							% BikePaths.TRUNK_LINK_MIN_WALK + "link %d stands"
+							% int((emitted[ai] as Dictionary)["id"]))
+				continue
+			var painted: float = 0.0
+			for r: float in _painted_runs(terrain, route, waypoints):
+				painted += r
+			if painted < BikePaths.TRUNK_LINK_MIN_PAINT:
+				skip_paint += 1
+				if emitted.has(ai):
+					_fail("L1: seed %d anchor %d (kind %d): painted %.1f m, under "
+							% [run_seed, ai, kind, painted] + "the %.0f m gate, yet "
+							% BikePaths.TRUNK_LINK_MIN_PAINT + "link %d stands"
+							% int((emitted[ai] as Dictionary)["id"]))
+				continue
+			var poly := PackedVector2Array()
+			for station: Dictionary in route:
+				poly.append(station["pos"])
+			var water: Dictionary = terrain.bike_trunk_bridges(poly,
+					BikePaths.BIKE_PATH_WIDTH * 0.5, BikePaths.BIKE_STATION_SPACING)
+			if bool(water["refused"]):
+				skip_other += 1
+				if emitted.has(ai):
+					_fail("L1: seed %d anchor %d (kind %d): the water refuses the "
+							% [run_seed, ai, kind] + "re-walk (a lake), yet link %d stands"
+							% int((emitted[ai] as Dictionary)["id"]))
+				continue
+			want[ai] = true
+			if not emitted.has(ai):
+				_fail("L1: seed %d anchor %d (kind %d): walk %.0f m, painted "
+						% [run_seed, ai, kind, walk] + "%.0f m — passes both "
+						% painted + "gates and the water, yet no link row stands")
+				continue
+			paints.append(snappedf(painted, 0.1))
+			var row: Dictionary = emitted[ai]
+			if absf(float(row["walk"]) - walk) > 0.001 \
+					or absf(float(row["painted"]) - painted) > 0.001:
+				_fail("L1: seed %d link %d reports walk/painted %.1f/%.1f m, the "
+						% [run_seed, int(row["id"]), float(row["walk"]),
+							float(row["painted"])] + "re-walk measures %.1f/%.1f m"
+						% [walk, painted])
+		var got: Array = emitted.keys()
+		got.sort()
+		var want_list: Array = want.keys()
+		want_list.sort()
+		if got != want_list:
+			_fail("L1: seed %d emits links at anchors %s, the re-walk expects %s"
+					% [run_seed, got, want_list])
+		emitted_total += emitted.size()
+		print("L1: seed %d: %d mile monuments, %d links emitted, %d/%d skipped by "
+				% [run_seed, mile_n, emitted.size(), skip_walk, skip_paint]
+				+ "the walk/paint gates, %d refused otherwise, painted %s, "
+				% [skip_other, paints] + "trunks() cold %d ms" % cold)
+		terrain.free()
+	if emitted_total == 0:
+		_fail("L1 swept %d seeds and no seed emitted a monument link, so 'the "
+				% SWEEP16.size() + "emitted set is the landmarks passing the gates' "
+				+ "was asserted of nothing")
+	if annulus_total == 0:
+		_fail("L1 CONTROL: no annulus landmark exists across %d seeds, so 'zero "
+				% SWEEP16.size() + "links to annulus landmarks' held for free")
+	else:
+		print("L1: %d links emitted over %d seeds, %d annulus landmarks unlinked"
+				% [emitted_total, SWEEP16.size(), annulus_total])
+	Sentinel.done("monument_links")
+
+
+func _check_monument_link_world_tie(terrain_script: GDScript) -> void:
+	"""
+	L2 (bead godot-test1-pnvb.11) — THE NAMED WORLD TIE: one link's trunk-side
+	terminal station IS the lane station it was aimed at, to the bit, and its
+	DRAWN strip box stands within 1 cm of the walk's midpoint.
+
+	The first emitted link on SEEDS[0]: the target is picked here knowing
+	nothing but the monument and the graph (`_link_nearest`), then the row's
+	`to` AND its last station must BE that `Vector2` with `==` — the arrival
+	snap, the same property T2 asserts for trunks. Then the MIDDLE DRAWN
+	segment (drawn, because only drawn segments own boxes; middle, because
+	that is the walk's own midpoint as near as paint allows) is tied the T1
+	way: a strip box in the midpoint's chunk batch within STRIP_TOLERANCE,
+	claimed by that edge's marker. Fails on no link, no drawable segment, no
+	box, or no claim — every half of it.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var trunks: Array[Dictionary] = BikePaths.trunks(terrain)
+	var anchors: Array = terrain.bike_anchors()
+	var waypoints: Array = terrain.waypoint_sites()
+	var graph: Array = _link_graph_stations(trunks)
+	var link: Dictionary = {}
+	for trunk: Dictionary in trunks:
+		if bool(trunk.get("link", false)):
+			link = trunk
+			break
+	if link.is_empty():
+		_fail("L2: seed %d emits no monument link, so the terminal tie and the "
+				% SEEDS[0] + "strip tie were never made — the tier may be dead")
+		terrain.free()
+		return
+	var apos: Vector2 = anchors[int(link["a"])]["pos"]
+	var target: Vector2 = _link_nearest(graph, apos)
+	if (link["to"] as Vector2) != target:
+		_fail("L2: link %d runs to %s, but the nearest trunk station to its "
+				% [int(link["id"]), link["to"]] + "monument (anchor %d) is %s — "
+				% [int(link["a"]), target] + "it is not aimed at what a T-junction "
+				+ "must stand on")
+	var stations: Array = link["stations"]
+	if ((stations[stations.size() - 1] as Dictionary)["pos"] as Vector2) != target:
+		_fail("L2: link %d's terminal station is %s, not the aimed-at %s — the "
+				% [int(link["id"]), (stations[stations.size() - 1] as Dictionary)["pos"],
+					target] + "arrival must be an ASSIGNMENT and not a tolerance")
+	var drawn: Dictionary = _drawable_segments(terrain, stations, waypoints)
+	if drawn.is_empty():
+		_fail("L2: link %d has no drawable segment though it passed the %.0f m "
+				% [int(link["id"]), BikePaths.TRUNK_LINK_MIN_PAINT] + "paint gate — "
+				+ "the gate and the draw tier disagree about what paints")
+	else:
+		var keys: Array = drawn.keys()
+		keys.sort()
+		var seg: int = int(keys[keys.size() / 2])
+		var mid: Vector2 = (((stations[seg] as Dictionary)["pos"] as Vector2)
+				+ ((stations[seg + 1] as Dictionary)["pos"] as Vector2)) * 0.5
+		var chunk_pos: Vector2i = terrain.world_to_chunk(Vector3(mid.x, 0.0, mid.y))
+		var built: Dictionary = _spawn_bare(terrain, chunk_pos)
+		var at: Vector3 = terrain.chunk_to_world(chunk_pos)
+		var best: float = INF
+		var found: bool = false
+		for entry_v: Variant in (built["batch"] as Array):
+			var t: Transform3D = (entry_v as Dictionary)["transform"]
+			if not is_equal_approx(t.origin.y, BikePaths.BIKE_PATH_THICKNESS * 0.5):
+				continue
+			var world := Vector2(at.x + t.origin.x, at.z + t.origin.z)
+			var d: float = world.distance_to(mid)
+			best = minf(best, d)
+			if d <= STRIP_TOLERANCE:
+				found = true
+				break
+		if not found:
+			var msg: String = "L2: link %d segment %d's midpoint %s falls in chunk %s — " \
+				% [int(link["id"]), seg, mid, chunk_pos]
+			msg += "and the nearest drawn strip box stands %.2f m away" % best
+			_fail(msg)
+		else:
+			var claimed: bool = false
+			for row: Dictionary in (built["paths"] as Array[Dictionary]):
+				if int(row["edge"]) == int(link["id"]) \
+						and seg in (row["segments"] as PackedInt32Array):
+					claimed = true
+			if not claimed:
+				_fail("L2: chunk %s drew link %d's segment %d but its marker does "
+						% [chunk_pos, int(link["id"]), seg] + "not list it")
+			else:
+				print("L2: link %d (anchor %d) ends to the bit on %s and paints "
+						% [int(link["id"]), int(link["a"]), target] + "segment %d "
+						% seg + "at %s, marker-claimed" % mid)
+	terrain.free()
+	Sentinel.done("monument_link_world_tie")
+
+
+func _check_monument_link_lengths(terrain_script: GDScript) -> void:
+	"""
+	L3 (bead godot-test1-pnvb.11) — NO PAINTED LINK PIECE UNDER 40 m, over
+	SWEEP16, measured off the world's own markers.
+
+	Per emitted link: the drawable set (`_drawable_segments`, the mirror 2d
+	proves against the spawner) selects the chunks, and the MARKERS' segment
+	lists are the verdict — the union must equal the drawable set exactly (a
+	link's whole cover, not a sample: the cover fault names the segment), and
+	the summed strip length must reach `TRUNK_LINK_MIN_PAINT`. "Piece" is the
+	link's whole painted length: runs split only at gaps the draw tier leaves
+	by rule, and the gate measures the same total, so the two cannot disagree
+	about a split link.
+
+	CONTROL, failing on zero: at least one link skipped by a gate across the
+	sweep (`trunk_link_report`'s "walk"/"paint" rows) — a gate that never fired
+	is a gate this check never saw.
+	"""
+	var gate_skipped: int = 0
+	for run_seed: int in SWEEP16:
+		var terrain: Node3D = _terrain(terrain_script, run_seed, true)
+		var trunks: Array[Dictionary] = BikePaths.trunks(terrain)
+		var waypoints: Array = terrain.waypoint_sites()
+		for row: Dictionary in BikePaths.trunk_link_report(terrain):
+			if not bool(row["emitted"]) \
+					and (str(row["skip"]) == "walk" or str(row["skip"]) == "paint"):
+				gate_skipped += 1
+		var chunks := {}
+		var link_n: int = 0
+		var totals: Array = []
+		for trunk: Dictionary in trunks:
+			if not bool(trunk.get("link", false)):
+				continue
+			link_n += 1
+			var stations: Array = trunk["stations"]
+			var want: Dictionary = _drawable_segments(terrain, stations, waypoints)
+			# The chunks the drawable midpoints fall in, each built once per
+			# seed: the midpoint rule is the assignment, so these are exactly
+			# the chunks that may hold this link's paint.
+			var mine := {}
+			for i_v: Variant in want:
+				var i: int = int(i_v)
+				var mid: Vector2 = (((stations[i] as Dictionary)["pos"] as Vector2)
+						+ ((stations[i + 1] as Dictionary)["pos"] as Vector2)) * 0.5
+				var cp: Vector2i = terrain.world_to_chunk(Vector3(mid.x, 0.0, mid.y))
+				if not chunks.has(cp):
+					chunks[cp] = _spawn_bare(terrain, cp)
+				mine[cp] = true
+			var lists: Array = []
+			for cp_v: Variant in mine:
+				var segs := PackedInt32Array()
+				for prow: Dictionary in (((chunks[cp_v] as Dictionary)["paths"]) as Array):
+					if int(prow["edge"]) == int(trunk["id"]):
+						segs.append_array(prow["segments"])
+				lists.append(segs)
+			var fault: String = _cover_fault_set(lists, want)
+			if fault != "":
+				_fail("L3: seed %d link %d: %s — the chunks holding its paint "
+						% [run_seed, int(trunk["id"]), fault] + "disagree with "
+						+ "its drawable set")
+				continue
+			var total: float = 0.0
+			for i_v: Variant in want:
+				var i: int = int(i_v)
+				total += ((stations[i] as Dictionary)["pos"] as Vector2).distance_to(
+						(stations[i + 1] as Dictionary)["pos"] as Vector2)
+			totals.append(snappedf(total, 0.1))
+			if total < BikePaths.TRUNK_LINK_MIN_PAINT:
+				_fail("L3: seed %d link %d paints %.1f m, under the %.0f m gate "
+						% [run_seed, int(trunk["id"]), total,
+							BikePaths.TRUNK_LINK_MIN_PAINT] + "— the gate let a "
+						+ "stub through")
+		print("L3: seed %d: %d links, painted totals %s" % [run_seed, link_n, totals])
+		terrain.free()
+	if gate_skipped == 0:
+		_fail("L3 CONTROL: no link was skipped by either gate across %d seeds, "
+				% SWEEP16.size() + "so the gates never fired and 'no painted piece "
+				+ "under 40 m' held for free — the gates are dead or the sweep "
+				+ "is blind")
+	else:
+		print("L3: %d links skipped by a gate across %d seeds — the gates are live"
+				% [gate_skipped, SWEEP16.size()])
+	Sentinel.done("monument_link_lengths")
 
 
 func _terrain(terrain_script: GDScript, seed_value: int, paths_on: bool) -> Node3D:

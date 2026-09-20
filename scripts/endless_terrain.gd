@@ -3638,6 +3638,15 @@ func landmark_sites() -> Dictionary:
 	return TerrainLandmarks.landmark_sites(self)
 
 
+## How many landmark kinds stand on the mile this run (bead
+## godot-test1-pnvb.11): kinds below it are mile monuments, the rest annulus.
+## Earned like every forwarder here — `BikePaths`' side-link tier asks
+## mile-vs-annulus of the landmark family through the node that owns the
+## state, never by naming the class.
+func landmark_mile_slots() -> int:
+	return TerrainLandmarks.landmark_mile_slots(self)
+
+
 # ============================================================================
 # WAYPOINTS — one forwarder; the circles are in terrain_waypoints.gd
 # ============================================================================
