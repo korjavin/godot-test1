@@ -80,6 +80,24 @@ static func landmark_sites(terrain: Node3D) -> Dictionary:
 	return terrain._landmark_sites_cache
 
 
+static func landmark_mile_slots(terrain: Node3D) -> int:
+	"""
+	How many landmark kinds stand on the MILE this run: kinds 0..slots-1 are
+	mile monuments, the rest are annulus.
+
+	THE SAME ARITHMETIC `_build_landmark_sites` divides the corridor with — one
+	seam, two readers — so a tier asking "mile or annulus" (bead
+	godot-test1-pnvb.11's side-links) gets the builder's own answer rather than
+	restating it. Pure in `run_seed` (the road cache is), costs no draw.
+	"""
+	var kinds: int = LandmarkBuilders.LANDMARKS.size()
+	var mile_x_min: float = 0.0
+	terrain._road_extend_to_x(mile_x_min, terrain.ROAD_TERMINAL_X)
+	var k_last: int = terrain._road_terminal_k()
+	var corridor: float = maxf(1.0, terrain._road_station(k_last).center.x - mile_x_min)
+	return clampi(int(corridor / terrain.LANDMARK_MILE_SPACING), 0, kinds)
+
+
 static func landmark_site(terrain: Node3D, kind: int) -> Vector2i:
 	"""
 	Where kind `kind` stands this run, as CHUNK coordinates.

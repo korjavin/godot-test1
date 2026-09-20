@@ -424,6 +424,29 @@ const TRUNK_TURN_ROW: int = 777000
 ## the note above argues.
 const TRUNK_TURN_PAIR_STRIDE: int = 4096
 
+## THE SIDE-LINK'S OWN TURN-KEY ROW (bead godot-test1-pnvb.11): one
+## deterministic T-junction per mile monument, homing from the landmark's
+## anchor onto the nearest trunk station. A link's two ends are a landmark
+## anchor and a lane station — not an anchor pair — so `_trunk_turn_key` has
+## nothing to pack, and sharing the trunk row would hand every link the key
+## of whatever pair packed the same way (including a real edge's). The row
+## is out of the world and collision-free for the same reason `TRUNK_TURN_ROW`
+## is (`BIKE_TURN_PRIME_Y` is odd, hence invertible mod 2^32).
+const TRUNK_LINK_TURN_ROW: int = TRUNK_TURN_ROW + 1
+
+## THE TWO LENGTH GATES (owner ruling 2026-09-20, bead godot-test1-pnvb.11,
+## option b): a monument link is emitted only where the walk is >= 60 m AND
+## the painted piece is >= 40 m — the long clear driveways, none of the
+## stubs. A per-row skip AFTER the walk, no RNG involved;
+## `_trunk_painted_length` measures the paint by the draw tier's own rule.
+const TRUNK_LINK_MIN_WALK: float = 60.0
+const TRUNK_LINK_MIN_PAINT: float = 40.0
+
+## Link rows are not graph edges, so their ids must not collide with edge ids
+## (check 3 and T2 look trunks up by edge id): one per emitted link, in anchor
+## order, from this base. The graph holds single-digit ids; this stays clear.
+const TRUNK_LINK_ID_BASE: int = 1000
+
 ## How far past the straight-line station count a homing walk may wander before
 ## it is abandoned. The walk's heading is clamped to `BIKE_MAX_HEADING_DEG` of the
 ## bearing to the target, so every station closes the gap by at least
@@ -938,48 +961,265 @@ retired with it in `godot-test1-pnvb.10`.)
 		var route: Array[Dictionary] = _trunk_route(terrain, anchors, edge)
 		if route.size() < TRUNK_MIN_STATIONS:
 			continue
-		# --- THE RIVERS (child `.3`). A trunk crosses one ON A REAL DECK, built by
-		# the shipped `FieldBridges._field_bridge_row_from` through the terrain's
-		# forwarder — the family reaches its sibling through the node that owns the
-		# state, never by name. A LAKE (past FIELD_BRIDGE_MAX_SPAN of walked water)
-		# abandons the whole edge, because a half trunk is the litter this epic
-		# exists to remove and a bike path is never anyone's only route, so nothing
-		# can softlock either way.
-		var water: Dictionary = terrain.bike_trunk_bridges(
-				_trunk_poly(route), BIKE_PATH_WIDTH * 0.5, BIKE_STATION_SPACING)
-		if bool(water["refused"]):
+		var row: Dictionary = _trunk_row_with_water(terrain, route, waypoints,
+				int(edge["id"]), int(edge["a"]), int(edge["b"]))
+		if row.is_empty():
 			continue
-		var decks: Array = _drawable_decks(terrain, water["rows"], waypoints)
-		# THE ROUTE'S BOX HAS TO HOLD THE DECKS TOO. A deck's ramp foot stands a
-		# whole ramp run plus its push budget PAST the last station it was built
-		# from, and the box is what the per-chunk lookup rejects on — so a chunk
-		# holding nothing but that ramp would reject the trunk before the deck pass
-		# ever ran, and the ramp would silently never be drawn. Merging is free:
-		# the box is a rejection filter, so a wider one costs a few `Rect2` tests
-		# and the midpoint rule still decides who draws what.
-		#
-		# NOT EXERCISED BY ANY CI SEED (measured, mutation M12: deleting the merge
-		# leaves the whole suite green), and said plainly for the reason the marker
-		# guard in the spawner says it. A deck mid-route sits well inside the route's
-		# own padded box; the merge bites only where a crossing is near an extreme
-		# station, or where a foot push carries a ramp sideways past one. It costs one
-		# `Rect2.merge` per deck, and `bike_path_selfcheck` B1b is the assertion that
-		# fires the day a seed lines one up.
-		var box: Rect2 = _trunk_box(route)
-		for row_v: Variant in decks:
-			box = box.merge((row_v as Dictionary)["box"] as Rect2)
-		out.append({
-			"id": int(edge["id"]),
-			"a": int(edge["a"]),
-			"b": int(edge["b"]),
-			"stations": route,
-			"box": box,
-			"from": route[0]["pos"],
-			"to": route[-1]["pos"],
-			"bridges": decks,
-		})
+		out.append(row)
+	# --- THE MONUMENT SIDE-LINKS (bead godot-test1-pnvb.11), appended after the
+	# graph's own routes: one deterministic T-junction per mile monument onto
+	# the nearest trunk station above. They ride the same rows, the same box
+	# lookup, the same decks and the same paint — `trunk_abandoned` and the
+	# graph-side checks never see them (their ids are not edge ids).
+	out.append_array(_trunk_monument_links(terrain, anchors, waypoints, out))
 	cache["trunks"] = out
 	return out
+
+
+static func _trunk_row_with_water(terrain: Node3D, route: Array[Dictionary],
+		waypoints: Array[Dictionary], id: int, ai: int, bi: int) -> Dictionary:
+	"""
+	A walked route's trunk ROW: the river scan, the drawable decks, the box
+	merged to hold them, or {} when the water refuses it.
+
+	FACTORED OUT OF `trunks()` FOR THE SIDE-LINKS (bead godot-test1-pnvb.11):
+	the graph loop and the monument links build the identical row shape through
+	this one body, so a deck, a box merge or a refusal cannot drift apart
+	between the two tiers.
+
+	@param route: The walked stations, at least `TRUNK_MIN_STATIONS` of them.
+	@param waypoints: `terrain.waypoint_sites()`, for `_drawable_decks`.
+	@param id / @param ai / @param bi: The row's id and anchor indices — a graph
+	                edge's own for a trunk, `TRUNK_LINK_ID_BASE` + ordinal and
+	                the landmark's index twice for a link.
+	@return: `{ id, a, b, stations, box, from, to, bridges }`, or {} on a LAKE
+	         (past FIELD_BRIDGE_MAX_SPAN of walked water — standing water
+	         rather than a river, and no deck is built over it).
+
+	THE RIVERS (child `.3`). A trunk crosses one ON A REAL DECK, built by the
+	shipped `FieldBridges._field_bridge_row_from` through the terrain's
+	forwarder — the family reaches its sibling through the node that owns the
+	state, never by name. A LAKE abandons the whole route, because a half trunk
+	is the litter this epic exists to remove and a bike path is never anyone's
+	only route, so nothing can softlock either way.
+
+	THE ROUTE'S BOX HAS TO HOLD THE DECKS TOO. A deck's ramp foot stands a
+	whole ramp run plus its push budget PAST the last station it was built
+	from, and the box is what the per-chunk lookup rejects on — so a chunk
+	holding nothing but that ramp would reject the trunk before the deck pass
+	ever ran, and the ramp would silently never be drawn. Merging is free:
+	the box is a rejection filter, so a wider one costs a few `Rect2` tests
+	and the midpoint rule still decides who draws what.
+	#
+	# NOT EXERCISED BY ANY CI SEED (measured, mutation M12: deleting the merge
+	# leaves the whole suite green). A deck mid-route sits well inside the
+	# route's own padded box; the merge bites only where a crossing is near an
+	# extreme station, or where a foot push carries a ramp sideways past one.
+	# It costs one `Rect2.merge` per deck, and `bike_path_selfcheck` B1b is
+	# the assertion that fires the day a seed lines one up.
+	"""
+	var water: Dictionary = terrain.bike_trunk_bridges(
+			_trunk_poly(route), BIKE_PATH_WIDTH * 0.5, BIKE_STATION_SPACING)
+	if bool(water["refused"]):
+		return {}
+	var decks: Array = _drawable_decks(terrain, water["rows"], waypoints)
+	var box: Rect2 = _trunk_box(route)
+	for row_v: Variant in decks:
+		box = box.merge((row_v as Dictionary)["box"] as Rect2)
+	return {
+		"id": id,
+		"a": ai,
+		"b": bi,
+		"stations": route,
+		"box": box,
+		"from": route[0]["pos"],
+		"to": route[-1]["pos"],
+		"bridges": decks,
+	}
+
+
+static func _trunk_painted_length(terrain: Node3D, stations: Array[Dictionary],
+		waypoints: Array[Dictionary]) -> float:
+	"""
+	The ground-level strip a route would paint, in metres: the summed length
+	of its drawable segments.
+
+	THE PAINT HALF OF THE LINK GATES (bead godot-test1-pnvb.11): a monument
+	link is emitted only where this reaches `TRUNK_LINK_MIN_PAINT`. THE SAME
+	RULE AS THE DRAW TIER, asked of the same shipped predicates
+	`_draw_path_share` asks — water at either end or between, any of the
+	three keep-out probes, the mountain midpoint — so the gate predicts what
+	the chunks will draw rather than owning a second idea of it
+	(`bike_path_selfcheck` 2d proves that rule against the spawner, and L3
+	measures the world). Decks are NOT counted: a deck replaces a water gap
+	with stone at height, so ground paint alone can only UNDERSTATE a link
+	and skip it — the safe direction for L3, never a sub-40 piece let
+	through.
+	"""
+	var total: float = 0.0
+	for i in range(stations.size() - 1):
+		var a: Vector2 = stations[i]["pos"]
+		var b: Vector2 = stations[i + 1]["pos"]
+		if terrain.is_river_at(Vector3(a.x, 0.0, a.y)) \
+				or terrain.is_river_at(Vector3(b.x, 0.0, b.y)) \
+				or segment_blocked(terrain, a, b):
+			continue
+		if trunk_keep_out(terrain, a, waypoints) \
+				or trunk_keep_out(terrain, b, waypoints) \
+				or trunk_keep_out(terrain, (a + b) * 0.5, waypoints):
+			continue
+		if terrain.biome_at(((a + b) * 0.5).x, ((a + b) * 0.5).y) == terrain.Biome.MOUNTAIN:
+			continue
+		total += a.distance_to(b)
+	return total
+
+
+static func _trunk_monument_links(terrain: Node3D, anchors: Array[Dictionary],
+		waypoints: Array[Dictionary], grown: Array[Dictionary]) -> Array[Dictionary]:
+	"""
+	ONE DETERMINISTIC SIDE-LINK PER MILE MONUMENT, homing from the landmark's
+	chunk-centre anchor onto the nearest station of any drawn trunk above
+	(bead godot-test1-pnvb.11).
+
+	@param anchors: `terrain.bike_anchors()`, the table the landmark rows live in.
+	@param waypoints: `terrain.waypoint_sites()`, for the gates' keep-out probes.
+	@param grown: The graph's own rows, built above — the ONLY stations a link
+	                may aim at, so links never chain off each other.
+	@return: The emitted link rows, in anchor order, each the
+	         `_trunk_row_with_water` shape plus `"link": true` and its measured
+	         `"walk"` / `"painted"` lengths. Every mile landmark also gets a
+	         `trunk_link_report` row whether it emitted or not.
+
+	FOR EACH MILE LANDMARK (kind < `terrain.landmark_mile_slots()` — lateral
+	60-120 m off the road; THE ANNULUS IS NEVER LINKED, owner ruling 3), the
+	homing walk from the anchor to the NEAREST station of `grown` (lanes and
+	walks alike), reusing `_trunk_route` over a two-row synthetic anchor table
+	`[landmark_row, {pos: station}]` with the landmark's own turn-key row
+	(`_trunk_link_key` on its anchor index). The trunk-side end lands ON the
+	station by the arrival snap: a genuine T, no junction furniture (owner
+	ruling 5 keeps mid-span junction furniture in pnvb.6).
+
+	A LINK BELOW EITHER GATE IS NOT EMITTED — the walk under
+	`TRUNK_LINK_MIN_WALK`, the painted piece under `TRUNK_LINK_MIN_PAINT`, a
+	per-row skip AFTER the walk, no RNG involved. A link whose walk is
+	refused, that stops at the city rect short of its station, or that the
+	water refuses is not emitted either: a half link is the litter this epic
+	exists to remove. The landmark's own chunk keep-out is NOT exempted (the
+	bead's landmine): the exact monument spot is decided per chunk against
+	obstacles and is not globally computable, so the paint stops at the
+	chunk edge and the gate measures what survives it.
+
+	A TRUNK ROUTE for scarcity: exempt as a route, its poles form-3 thinned
+	like every trunk pole — both automatic, the same `_draw_path_share` draws
+	them. COSTS NO DRAW: the graph is a dispatch, the walk is a hash, the gates
+	are arithmetic.
+	"""
+	var emitted: Array[Dictionary] = []
+	var report: Array[Dictionary] = []
+	# KIND_LANDMARK by value (BikeNetwork.KIND_LANDMARK = 4): this family
+	# reaches that table through the terrain, never by name — CLAUDE.md,
+	# Conventions — the way `_trunk_lane` reads kinds 1 and 3.
+	var mile: int = terrain.landmark_mile_slots()
+	var sites: Dictionary = terrain.landmark_sites()
+	if grown.is_empty():
+		terrain._bike_trunk_cache["link_report"] = report
+		return emitted
+	var n: int = 0
+	for ai in anchors.size():
+		if int(anchors[ai]["kind"]) != 4:
+			continue
+		var apos: Vector2 = anchors[ai]["pos"]
+		var home: Vector2i = terrain.world_to_chunk(Vector3(apos.x, 0.0, apos.y))
+		if not sites.has(home):
+			continue
+		var kind: int = int(sites[home])
+		if kind >= mile:
+			continue
+		var entry := {"anchor": ai, "kind": kind, "walk": 0.0, "painted": 0.0,
+				"emitted": false, "skip": "", "id": -1}
+		# THE NEAREST STATION, first-min wins: the iteration order is the
+		# memo's, so the answer is a pure function of the world.
+		var target: Vector2 = apos
+		var best: float = INF
+		for trunk: Dictionary in grown:
+			for station: Dictionary in (trunk["stations"] as Array[Dictionary]):
+				var d: float = apos.distance_to(station["pos"])
+				if d < best:
+					best = d
+					target = station["pos"]
+		var reason: Array[String] = [""]
+		var synth: Array[Dictionary] = [
+				{"pos": apos, "kind": 4},
+				{"pos": target, "kind": 4},
+			]
+		var route: Array[Dictionary] = _trunk_route(terrain, synth,
+				{"a": 0, "b": 1}, reason, ai)
+		if route.size() < TRUNK_MIN_STATIONS:
+			entry["skip"] = reason[0]
+			report.append(entry)
+			continue
+		if (route[-1]["pos"] as Vector2) != target:
+			# Stopped at Budapest's rect edge short of its station: it ends
+			# nowhere a T can stand, so it does not exist.
+			entry["skip"] = "rect"
+			report.append(entry)
+			continue
+		var walk: float = 0.0
+		for i in range(route.size() - 1):
+			walk += ((route[i]["pos"] as Vector2).distance_to(
+					(route[i + 1]["pos"] as Vector2)))
+		entry["walk"] = walk
+		if walk < TRUNK_LINK_MIN_WALK:
+			entry["skip"] = "walk"
+			report.append(entry)
+			continue
+		var painted: float = _trunk_painted_length(terrain, route, waypoints)
+		entry["painted"] = painted
+		if painted < TRUNK_LINK_MIN_PAINT:
+			entry["skip"] = "paint"
+			report.append(entry)
+			continue
+		var row: Dictionary = _trunk_row_with_water(terrain, route, waypoints,
+				TRUNK_LINK_ID_BASE + n, ai, ai)
+		if row.is_empty():
+			entry["skip"] = "lake"
+			report.append(entry)
+			continue
+		row["link"] = true
+		row["walk"] = walk
+		row["painted"] = painted
+		entry["emitted"] = true
+		entry["id"] = int(row["id"])
+		report.append(entry)
+		emitted.append(row)
+		n += 1
+	terrain._bike_trunk_cache["link_report"] = report
+	return emitted
+
+
+static func trunk_link_report(terrain: Node3D) -> Array[Dictionary]:
+	"""
+	One row per MILE landmark this run: `{ anchor: int (into
+	`terrain.bike_anchors()`), kind: int, walk: float (the walked metres, 0
+	when the walk never finished), painted: float (the drawable metres, 0
+	when the gates never saw it), emitted: bool, skip: String, id: int (the
+	link row's id, -1 when skipped) }`.
+
+	`skip` is "" when emitted, the walk's own refusal (`trunk_abandoned`'s
+	vocabulary) when the walk died, "rect" when the walk stopped at
+	Budapest's edge short of its station, "walk" / "paint" for the two owner
+	gates, "lake" when the water refused it.
+
+	THE L-SUITE'S EVIDENCE (`bike_path_selfcheck` L1/L3): which landmarks the
+	gates skipped, by name — including the CONTROL that a gate with nothing
+	to skip is a gate that never fired. Built by `trunks()` in the same pass
+	as the rows and memoized beside them: same lifecycle (dropped by
+	`_drop_seeded_memos()`), no second walk.
+	"""
+	var cache: Dictionary = terrain._bike_trunk_cache
+	if not cache.has("link_report"):
+		trunks(terrain)
+	return cache["link_report"]
 
 
 static func _trunk_poly(route: Array[Dictionary]) -> PackedVector2Array:
@@ -1108,6 +1348,36 @@ static func _trunk_turn_key(a: int, b: int) -> Vector2i:
 	pair and get bit-for-bit the walk the spawner will draw for it.
 	"""
 	return Vector2i(mini(a, b) * TRUNK_TURN_PAIR_STRIDE + maxi(a, b), TRUNK_TURN_ROW)
+
+
+static func _trunk_link_key(landmark_anchor: int) -> Vector2i:
+	"""
+	The turn-and-top hash key for the monument side-link at anchor
+	`landmark_anchor`: the pair-packing worn by the landmark's own index, on
+	`TRUNK_LINK_TURN_ROW`.
+
+	PAIR-PACKED ON ONE INDEX — the pair is (i, i), which no real trunk key can
+	hold (`edges()` guarantees a < b, so every trunk key packs min < max and the
+	representation with stride 4096 is unique). Together with the row itself
+	that is two reasons a link's `_bike_turn` stream meets no trunk's. Stable
+	across re-seeds the way the anchor table is: a pure function of the anchor
+	index, no RNG anywhere near it.
+	"""
+	return Vector2i(landmark_anchor * TRUNK_TURN_PAIR_STRIDE + landmark_anchor,
+		TRUNK_LINK_TURN_ROW)
+
+
+static func _trunk_row_key(trunk: Dictionary) -> Vector2i:
+	"""
+	The turn-and-top hash key for a trunk ROW: the pair-packed key for a graph
+	route, the link key for a monument side-link (whose two ends are a
+	landmark anchor and a lane station, not an anchor pair, so
+	`_trunk_turn_key` has nothing to pack — the landmark's anchor index rides
+	in the row's `a` for exactly this).
+	"""
+	if bool(trunk.get("link", false)):
+		return _trunk_link_key(int(trunk["a"]))
+	return _trunk_turn_key(int(trunk["a"]), int(trunk["b"]))
 
 
 static func trunk_pair_walk(terrain: Node3D, anchors: Array[Dictionary], a: int, b: int,
@@ -1280,14 +1550,22 @@ static func _trunk_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi
 
 
 static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dictionary,
-		reason: Array[String] = []) -> Array[Dictionary]:
+		reason: Array[String] = [], link_anchor: int = -1) -> Array[Dictionary]:
 	"""
 	THE HOMING WALK from one anchor to the other. A pure function of (edge id,
 	`run_seed`), and it consumes no RNG at all.
 
 	@param anchors: `terrain.bike_anchors()`, passed in because the caller walks
-	                every edge against the same table.
+	                every edge against the same table — or a two-row synthetic
+	                table `[landmark_row, {pos: station}]` for a monument
+	                side-link (bead godot-test1-pnvb.11), with `edge` = {a: 0,
+	                b: 1} into it.
 	@param reason: Optional single-element out-parameter for `trunk_abandoned`.
+	@param link_anchor: The landmark's anchor index for a side-link, or -1 for a
+	                graph edge. Selects the turn-key row: the pair-packed key
+	                for an edge, `_trunk_link_key` on this index for a link —
+	                the walk is otherwise the same recurrence, and a link's
+	                synthetic rows wear a non-road kind so the lane never fires.
 	@return: The stations, `{ "pos": Vector2, "heading": float }`, or `[]`.
 
 	THE RECURRENCE IS `_next_heading()`: this walk passes THE BEARING TO ITS TARGET,
@@ -1336,7 +1614,8 @@ static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dict
 			reason[0] = "city"
 		return []
 
-	var key := _trunk_turn_key(int(edge["a"]), int(edge["b"]))
+	var key := _trunk_link_key(link_anchor) if link_anchor >= 0 \
+		else _trunk_turn_key(int(edge["a"]), int(edge["b"]))
 	# The waypoint table, read ONCE for the whole walk — it is pure in `run_seed`
 	# and rebuilding it per station is the walk's most expensive answer.
 	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
@@ -1858,7 +2137,7 @@ static func spawn_bike_path_in_chunk(terrain: Node3D, chunk_pos: Vector2i,
 		if not (trunk["box"] as Rect2).intersects(chunk_rect):
 			continue
 		var edge_id: int = int(trunk["id"])
-		var key := _trunk_turn_key(int(trunk["a"]), int(trunk["b"]))
+		var key := _trunk_row_key(trunk)
 		var built: Dictionary = _draw_path_share(terrain, chunk_pos, centre, key,
 				trunk["stations"], rng, obstacles, block_batch, block_body, cube_cursor,
 				edge_id, k, waypoints)
@@ -2253,6 +2532,12 @@ static func rack_owners(terrain: Node3D) -> Dictionary:
 	var anchors: Array[Dictionary] = terrain.bike_anchors()
 	var waypoints: Array[Dictionary] = terrain.waypoint_sites()
 	for i in anchors.size():
+		# NO RACK AT A MONUMENT (owner ruling 2026-09-20, bead
+		# godot-test1-pnvb.11): a rack belongs where a player has a reason to
+		# be — the places — so landmark-linked anchors stay out of the rack
+		# set explicitly. KIND_LANDMARK by value, the `_trunk_lane` idiom.
+		if int(anchors[i]["kind"]) == 4:
+			continue
 		var site: Vector2 = rack_site(terrain, anchors[i]["pos"], waypoints)
 		if site == Vector2.INF:
 			continue
