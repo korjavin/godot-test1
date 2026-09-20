@@ -1080,6 +1080,67 @@ static func trunk_pair_walk(terrain: Node3D, anchors: Array[Dictionary], a: int,
 	return _trunk_route(terrain, anchors, {"a": a, "b": b}, reason)
 
 
+static func _trunk_gate_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi: int,
+		gate_end: int) -> Array[Dictionary]:
+	"""
+	THE GATE'S LANE (bead godot-test1-pnvb.9, round 2): one end is a road
+	circle on its station (`circle_end`), the other the gate (`gate_end`).
+
+	@param ai / @param bi: The edge's two anchor indices, in edge order.
+	@param gate_end: Which of the two is the gate.
+	@return: `[circle] + [offset stations ka..k_term] + [gate]`, ordered from
+	           `ai` to `bi` — or [] when the circle is not on its station or
+	           stands past the terminal (impossible: every road circle stands
+	           west of it; the [] is the honest fallback).
+
+	The offset stations are the same arithmetic as `_trunk_lane`'s, same side,
+	same pitch, same headings. The last one stands at the authored end of the
+	road; the approach from it to the gate is ONE straight segment carrying
+	the terminal's road heading for its yaw, and the first station IS the
+	circle and the last IS the gate, so `_strict_link` snaps exactly both
+	ways. No `_bike_turn`, no RNG, no walk test of any kind: a lane cannot be
+	refused, which is the point — the homing walk died "road" on the
+	corridor's last stretch on every seed whose road runs at the gate.
+	"""
+	var circle_end: int = bi if gate_end == ai else ai
+	var pc: Vector2 = anchors[circle_end]["pos"]
+	var pg: Vector2 = anchors[gate_end]["pos"]
+	var nc: Dictionary = road_station_near(terrain, pc)
+	if nc.is_empty():
+		return []
+	var cc: Vector2 = (nc["station"] as Dictionary)["center"]
+	if pc.distance_to(cc) > TRUNK_LANE_ANCHOR_SNAP:
+		return []
+	var ka: int = int(nc["k"])
+	var k_term: int = terrain._road_terminal_k()
+	if ka > k_term:
+		return []
+	# The span, warmed like every other road consumer warms it — and never
+	# past the terminal: the top end IS the terminal station.
+	var pad: float = BIKE_ROAD_CLEARANCE + terrain._road_spacing() * 2.0
+	terrain._road_extend_to_x(pc.x - pad, (terrain._road_station(k_term)["center"] as Vector2).x)
+	var offs: Array[Dictionary] = []
+	var k: int = ka
+	while true:
+		var st: Dictionary = terrain._road_station(k)
+		var c: Vector2 = st["center"]
+		var h: float = float(st["heading"])
+		offs.append({
+				"pos": c + Vector2(-sin(h), cos(h)) * (TRUNK_LANE_SIDE * TRUNK_LANE_OFFSET),
+				"heading": h })
+		if k == k_term:
+			break
+		k += 1
+	var term_h: float = float(offs[offs.size() - 1]["heading"])
+	var stations: Array[Dictionary] = [{
+			"pos": pc, "heading": float((nc["station"] as Dictionary)["heading"]) }]
+	stations.append_array(offs)
+	stations.append({"pos": pg, "heading": term_h})
+	if gate_end == ai:
+		stations.reverse()
+	return stations
+
+
 static func _trunk_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi: int) -> Array[Dictionary]:
 	"""
 	THE ROAD'S OWN LINE, OFFSET (bead godot-test1-pnvb.9) — or [] when this pair
@@ -1088,8 +1149,9 @@ static func _trunk_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi
 	@param ai / @param bi: The edge's two anchor indices into `anchors`.
 	@return: `[anchor_a] + [road_station(k).center + left * offset for k in
 	           ka..kb] + [anchor_b]`, every station carrying its road station's
-	           heading — or [] when either anchor is not a field circle sitting
-	           on its road station.
+	           heading — or, for a circle-gate pair, the circle's anchor plus
+	           the offset stations to the last one plus the gate anchor — or []
+	           when the pair is neither.
 
 	A ROAD PAIR IS TWO KIND_WAYPOINT ROWS (the `1` below is
 	`BikeNetwork.KIND_WAYPOINT` by value: this family reaches that one through
@@ -1099,12 +1161,35 @@ static func _trunk_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi
 	circle and the gate stand far off, so the geometric test alone would do —
 	the kind test is the belt to its braces.
 
+	A CIRCLE-GATE PAIR (round 2: one KIND_WAYPOINT row on its station, one
+	KIND_GATE row — the `3` below is `BikeNetwork.KIND_GATE` by value) is ALSO
+	a lane: the road's offset stations from the circle's station to the LAST
+	station (`_road_terminal_k`, the authored end of the road), then ONE
+	straight approach segment from that last lane station to the gate anchor.
+	The approach's midpoint sits inside the swath, so the draw tier gaps the
+	whole segment and the paint ends where the road does — but the ROUTE
+	reaches the gate, which is what the chain is. The gate anchor is never
+	handed to `road_station_near` and no span is ever extended past
+	`ROAD_TERMINAL_X`: past the terminal there are no stations, only the
+	approach.
+
 	COSTS NO DRAW: arithmetic over the road cache. The span is clamped at
 	`ROAD_TERMINAL_X` (the cache stays honest past it, but no lane ever needs
 	it — every road circle stands west of the terminal).
 	"""
-	if int(anchors[ai]["kind"]) != 1 or int(anchors[bi]["kind"]) != 1:
+	var kind_a: int = int(anchors[ai]["kind"])
+	var kind_b: int = int(anchors[bi]["kind"])
+	var gate_end: int = -1
+	if kind_a == 1 and kind_b == 1:
+		pass
+	elif kind_a == 1 and kind_b == 3:
+		gate_end = bi
+	elif kind_a == 3 and kind_b == 1:
+		gate_end = ai
+	else:
 		return []
+	if gate_end >= 0:
+		return _trunk_gate_lane(terrain, anchors, ai, bi, gate_end)
 	var pa: Vector2 = anchors[ai]["pos"]
 	var pb: Vector2 = anchors[bi]["pos"]
 	var na: Dictionary = road_station_near(terrain, pa)

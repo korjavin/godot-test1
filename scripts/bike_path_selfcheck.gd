@@ -267,14 +267,14 @@ const SWEEP16: Array[int] = [
 const LANE_GAP_CHUNK := Vector2i(13, -2)
 
 ## Bead `godot-test1-pnvb.9` A2: the painted pieces under 30 m that survive are
-## approach raggedness at keep-out edges, and two seeds have two of them where
-## the bar allows one. Pinned like the drawn-chain sealed list: an entry must
+## approach raggedness at keep-out edges, and one seed has two of them where
+## the bar allows one. Pinned like the drawn-chain sealed list: the entry must
 ## reproduce EXACTLY (an improvement fails loud so the record is removed, not
-## left to rot). 31337: a lone lane segment between a river gap and the
-## destination's end-skip, plus a walk's first 25 m before the swath gap.
-## 123456: a walk's first 30 m before its gap, plus three lane stations between
-## the connector skip and the pass gap.
-const SMALL_PIECES_PINNED := {31337: 2, 123456: 2}
+## left to rot). 123456: a walk's first 30 m before its gap, plus three lane
+## stations between the connector skip and the pass gap. (31337 used to hold
+## two — a lone lane segment plus a gate walk's first 25 m; round 2's gate
+## lanes absorbed the walk stub, so it graduated back under the bar.)
+const SMALL_PIECES_PINNED := {123456: 2}
 
 ## THE A/B FIELD: a 4x4 band of chunks off the road's north side on `SEEDS[0]`,
 ## chosen because it holds every kind of chunk check 1 needs — four carrying path
@@ -480,33 +480,17 @@ const DRAWN_CHAIN_SEEDS: Array[int] = [20260904, 777, 4242, 1, 424242, 999983, 7
 ## so the record can never rot: a future walk-level fix has to touch this list.
 const DRAWN_CHAIN_SEALED := {
 	# Bead godot-test1-pnvb.9 re-survey, on the places-only graph: seed 1's door
-	# circle is massif-pocketed (both HQ walks die mountain) and its gate walk
-	# dies road at the corridor's doorstep — the HQ pocket binds first. 99999
-	# came out THERE through the canyon and moved to the green list, per the
-	# check's own rule. Seed 2's boundary dangle is gone with the landmark
-	# vertices (no gate trunk dangles any more); its gate walk dies mountain,
-	# so the class is exhausted now. 42 and 424242 stay as pnvb.8 surveyed them
-	# (the HQ-side seals are that bead's, P3); 555 is not in this sweep and
-	# stays pnvb.8's, by owner ruling 2026-09-20.
+	# circle is massif-pocketed (both HQ walks die mountain) and 42/424242 are
+	# pnvb.8's HQ-side seals (that bead's, P3) — all three stay, all exhausted.
+	# 99999 came out THERE through the canyon in round 1 and moved to the
+	# green list, per the check's own rule. Round 2's gate lanes recovered seed
+	# 2 and the four road-refused worlds (20260904, 4242, 750, 99): a lane
+	# cannot be refused, so their chains are THERE and they moved to the green
+	# list the same way — 555 is not in this sweep and stays pnvb.8's, by owner
+	# ruling 2026-09-20.
 	1: ["hq massif pocket and gate wall", "exhausted"],
 	424242: ["hq massif", "exhausted"],
 	42: ["hq in mountain biome", "exhausted"],
-	2: ["gate walk refused (mountain)", "exhausted"],
-	# Bead godot-test1-pnvb.9: PLACES-ONLY REGRESSIONS, recorded not hidden.
-	# On the old graph these four worlds reached the gate through landmark
-	# hops; on the places-only graph their only gate link (road_3->gate, and
-	# every longer frontier walk pass 2b tries) dies "road" — the homing walk
-	# runs the corridor's last stretch shallow under child .4's rule, and the
-	# canyon only forgives mountain. Fixing that is walk-level routing
-	# (pnvb.8, P3) or the refusal itself (.4's rule), both outside this bead —
-	# so they are sealed with the true reason and the class the check measured
-	# ("pass 2b found no strict pair": exhausted, nothing dangles). This seal
-	# is the C1 shortfall, and the report asks the owner to rule on it: accept
-	# the seal, re-scope C1, or send the gate link back for walk-level work.
-	20260904: ["gate walk refused (road)", "exhausted"],
-	4242: ["gate walk refused (road)", "exhausted"],
-	750: ["gate walk refused (road)", "exhausted"],
-	99: ["gate walk refused (road)", "exhausted"],
 }
 
 ## T4's ceiling on the trunk memo, in STATIONS across the whole world. Measured on
@@ -2483,10 +2467,19 @@ func _check_crossing_angle_rule(terrain_script: GDScript) -> void:
 			var bi: int = int(e["b"])
 			if not BikePaths._trunk_lane(terrain, anchors, ai, bi).is_empty():
 				# A lane: alongside by construction, out of scope. Its span
-				# still feeds the seam control below.
-				var na: Dictionary = BikePaths.road_station_near(terrain, anchors[ai]["pos"])
-				var nb: Dictionary = BikePaths.road_station_near(terrain, anchors[bi]["pos"])
-				if int(na["k"]) < 0 or int(nb["k"]) < 0:
+				# still feeds the seam control below — read off the CIRCLE
+				# ends only. The gate end is never handed to
+				# `road_station_near`: it stands past the terminal, and warming
+				# the cache past `ROAD_TERMINAL_X` for a seam count would invent
+				# stations the road never built (round 2).
+				var neg_here: bool = false
+				for end: int in [ai, bi]:
+					if int(anchors[end]["kind"]) != 1:
+						continue
+					var nn: Dictionary = BikePaths.road_station_near(terrain, anchors[end]["pos"])
+					if int(nn["k"]) < 0:
+						neg_here = true
+				if neg_here:
 					neg_station += 1
 				continue
 			var reason: Array[String] = [""]
@@ -4774,7 +4767,9 @@ func _check_bike_deck_clear_of_road(terrain_script: GDScript) -> void:
 
 	CONTROL, failing on zero: at least one lane river crossing WITH a deck in
 	the sweep — a sweep with no such crossing in it asserts nothing about
-	decks beside the road.
+	decks beside the road. Every lane counts here, circle-circle and
+	circle-gate alike (round 2): a gate lane crosses the same rivers on the
+	same offset, and its decks stand beside the road exactly like the others'.
 	"""
 	var decked: int = 0
 	for run_seed: int in SWEEP16:
@@ -4787,8 +4782,8 @@ func _check_bike_deck_clear_of_road(terrain_script: GDScript) -> void:
 			var bi: int = int(trunk["b"])
 			for row_v: Variant in (trunk["bridges"] as Array):
 				bike_rows.append(row_v)
-			if int(anchors[ai]["kind"]) != 1 or int(anchors[bi]["kind"]) != 1:
-				continue
+			# The lane predicate IS the scope: `_trunk_lane` answers non-empty
+			# for road pairs and circle-gate pairs, [] for the walks.
 			if BikePaths._trunk_lane(terrain, anchors, ai, bi).is_empty():
 				continue
 			for row_v: Variant in (trunk["bridges"] as Array):
