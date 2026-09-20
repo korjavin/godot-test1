@@ -1,7 +1,7 @@
 package main
 
-// main.go — process entry: config from the environment, seven routes, and two
-// small pieces of state. The lobby does signalling, membership and master-naming
+// main.go — process entry: config from the environment, ten routes, and
+// three small pieces of state. The lobby does signalling, membership and master-naming
 // and no game logic, but it is no longer entirely stateless: /best keeps
 // per-player best-run records (best.go), because the game's own `user://` store
 // does not survive on the web export, and /save keeps one opaque cloud slot
@@ -58,6 +58,12 @@ func main() {
 	save := newSaveStore(env("LOBBY_SAVE_FILE", ""))
 	go save.runDumper()
 
+	// Magic-link email sign-in — auth.go for why the address is never stored.
+	// LOBBY_AUTH_FILE unset means memory-only, same as the sibling stores.
+	auth := newAuthStore(env("LOBBY_AUTH_FILE", ""), best, save)
+	go auth.runDumper()
+	go auth.runSweeper()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)
 	mux.HandleFunc("/ice", iceHandler)
@@ -65,8 +71,14 @@ func main() {
 	// ⚠️ A NEW ROUTE ALSO NEEDS THE TRAEFIK PATH LIST in server/docker-compose.yml
 	// — the game client's catch-all owns `/` in production, so a route missing
 	// from the lobby's narrow rule silently serves index.html instead.
-	mux.HandleFunc("/best", best.handler)
-	mux.HandleFunc("/save", save.handler)
+	mux.HandleFunc("/auth/magic", auth.magicHandler)
+	mux.HandleFunc("/auth/verify", auth.verifyHandler)
+	mux.HandleFunc("/auth/session", auth.sessionHandler)
+	// /best and /save ride the session middleware: it reads X-Session, links
+	// an anon id to its sub once, and rewrites ?id= — anonymous requests pass
+	// through untouched, exactly as before.
+	mux.HandleFunc("/best", auth.withSession(best.handler))
+	mux.HandleFunc("/save", auth.withSession(save.handler))
 	mux.HandleFunc("/healthz", healthzHandler(hub))
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
