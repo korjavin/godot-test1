@@ -480,6 +480,8 @@ func _check_live() -> String:
 		failure = await _check_no_double_capture()
 	if failure.is_empty():
 		failure = await _check_hint()
+	if failure.is_empty():
+		failure = await _check_rack_hint()
 	Sentinel.done("live")
 	return failure
 
@@ -734,4 +736,140 @@ func _check_hint() -> String:
 		return "the hint check left the card open — the suite after this would inherit a pause"
 	print("hint: bottom-right, overlaps nothing, click toggles")
 	Sentinel.done("hint")
+	return ""
+
+
+# ============================================================================
+# 8. THE RACK HINT PAD (bead godot-test1-1hp7)
+# ============================================================================
+
+func _rack_stand(player: Node, dist: float) -> Node3D:
+	# A stub rack at `dist` metres of the player's XZ: group + metas exactly as
+	# `terrain_bike_paths` writes them (`bike_rental_selfcheck`'s recipe).
+	var at: Vector3 = player.global_position + Vector3(dist, 0.0, 0.0)
+	var stand := Node3D.new()
+	stand.name = "ProbeRack"
+	stand.set_meta("anchor", 7)
+	stand.set_meta("pos", Vector3(at.x, 0.0, at.z))
+	player.get_parent().add_child(stand)
+	stand.global_position = Vector3(at.x, 0.0, at.z)
+	stand.add_to_group("bike_stand")
+	return stand
+
+
+func _move_rack_stand(player: Node, stand: Node3D, dist: float) -> void:
+	# The player stays put and the rack walks: the body's XZ is the stable
+	# point, whatever gravity did to its Y since the last move.
+	var at: Vector3 = player.global_position + Vector3(dist, 0.0, 0.0)
+	stand.set_meta("pos", Vector3(at.x, 0.0, at.z))
+	stand.global_position = Vector3(at.x, 0.0, at.z)
+
+
+func _free_rack_stand(stand: Node3D) -> void:
+	# Out of the group NOW (`bike_rental_selfcheck`'s ghost note): queue_free
+	# is deferred, and a freed rack stays findable until the frame ends.
+	stand.remove_from_group("bike_stand")
+	stand.queue_free()
+
+
+func _mount_key_name() -> String:
+	# The oracle for the pad's key string, read off the InputMap itself: the
+	# first key event wins, physical position preferred — the shape the pad
+	# promises, measured at the source rather than shared from it.
+	if not InputMap.has_action("mount_bike"):
+		return ""
+	for event: InputEvent in InputMap.action_get_events("mount_bike"):
+		if event is InputEventKey:
+			var key := event as InputEventKey
+			var code := int(key.physical_keycode)
+			if code == 0:
+				code = int(key.keycode)
+			if code != 0:
+				return OS.get_keycode_string(code)
+	return ""
+
+
+func _check_rack_hint() -> String:
+	"""The rack hint pad: "X — rent a bike (2 coins)" on the reach edge, hidden
+	past it and 20 m out, hidden while riding — and agreeing with the mount's
+	own rule at every distance, so a decoupled radius fails here. A remapped
+	action renames the pad, so a hard-coded "X" fails too. Driven on the live
+	scene: the real player, a stub rack, the real HUD node."""
+	var hint: Label = root.get_node_or_null("Main/HUD/BikeRackHint") as Label
+	if hint == null:
+		return "no BikeRackHint under Main/HUD — was it dropped from main.tscn?"
+	if not hint.has_method("_action_key"):
+		return "BikeRackHint has no script — run `godot --headless --path . --import` first"
+	var player: Node = get_first_node_in_group("player")
+	if player == null:
+		return "no player after boot"
+	var abilities: Object = player.get("abilities")
+	if abilities == null or not abilities.has_method("nearest_bike_stand"):
+		return "the player has no shared reach rule for the pad to read"
+	var reach := float(PlayerController.BIKE_MOUNT_REACH)
+	player.dismount_bike()
+	player.own_coins = 9
+	var stand := _rack_stand(player, reach * 0.8)
+	await process_frame
+	await process_frame
+	var key := _mount_key_name()
+	if key.is_empty():
+		_free_rack_stand(stand)
+		return "mount_bike has no key bound — the pad's key string would pass vacuously"
+	var want := tr("%s — rent a bike (%d coins)") % [key, PlayerController.BIKE_COIN_COST]
+	if not hint.visible:
+		_free_rack_stand(stand)
+		return "at %.1f m of %.1f the pad stays hidden" % [reach * 0.8, reach]
+	if hint.text != want:
+		_free_rack_stand(stand)
+		return "pad reads '%s', expected '%s'" % [hint.text, want]
+	# The agreement, both sides of the edge and 20 m out: the pad is visible
+	# exactly when the mount's own rule finds a rack and the body can take it.
+	for dist: float in [reach * 0.5, reach * 0.9, reach * 1.1, 20.0]:
+		_move_rack_stand(player, stand, dist)
+		await process_frame
+		await process_frame
+		var near: bool = abilities.call("nearest_bike_stand") != null
+		var takeable: bool = near and not bool(player.get("is_riding"))
+		if hint.visible != takeable:
+			_free_rack_stand(stand)
+			return ("at %.1f m of %.1f the pad (%s) disagrees with the mount rule (%s) — "
+				% [dist, reach, str(hint.visible), str(takeable)]
+				+ "a decoupled radius must fail here")
+	# Mounted at the rack: the pad stands down.
+	_move_rack_stand(player, stand, reach * 0.5)
+	await process_frame
+	await process_frame
+	if not player.try_mount_bike():
+		_free_rack_stand(stand)
+		return "setup: try_mount_bike refused at %.1f m of %.1f with 9 coins" % [reach * 0.5, reach]
+	await process_frame
+	await process_frame
+	if hint.visible:
+		player.dismount_bike()
+		_free_rack_stand(stand)
+		return "mounted at the rack and the pad still shows"
+	player.dismount_bike()
+	# A remapped action renames the pad under a standing player.
+	var saved: Array = InputMap.action_get_events("mount_bike")
+	InputMap.action_erase_events("mount_bike")
+	var z := InputEventKey.new()
+	z.physical_keycode = KEY_Z
+	InputMap.action_add_event("mount_bike", z)
+	await process_frame
+	await process_frame
+	var renamed: String = hint.text
+	var shown: bool = hint.visible
+	InputMap.action_erase_events("mount_bike")
+	for event: InputEvent in saved:
+		InputMap.action_add_event("mount_bike", event)
+	if not shown:
+		_free_rack_stand(stand)
+		return "remapped pad hidden at %.1f m — the rename assertion would pass vacuously" % (reach * 0.5)
+	if "Z" not in renamed or "X" in renamed:
+		_free_rack_stand(stand)
+		return "remapped pad reads '%s' — the key string is not read from the InputMap" % renamed
+	_free_rack_stand(stand)
+	print("rack hint: rent line on the reach edge, hidden past it and riding, key live")
+	Sentinel.done("rack_hint")
 	return ""
