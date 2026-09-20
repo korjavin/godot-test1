@@ -3,6 +3,7 @@
   "batch_selfcheck": 0,
   "bike_network_selfcheck": 1,
   "bike_path_selfcheck": 2,
+  "bike_rental_selfcheck": 4,
   "boss_arms_selfcheck": 56,
   "boss_immunity_selfcheck": 14,
   "boss_leash_selfcheck": 61,

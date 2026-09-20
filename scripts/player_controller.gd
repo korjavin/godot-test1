@@ -1586,7 +1586,15 @@ func _physics_process(delta: float) -> void:
 		jump_buffer_timer = maxf(0.0, jump_buffer_timer - delta)
 	# Fire when a buffered press meets ground OR the coyote window. Giant Teibi
 	# is too heavy to leave the ground, so he can't jump while transformed.
-	if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_giant:
+	# A jump press while RIDING dismounts instead of jumping (bead
+	# godot-test1-z2yv.7, ruling 5): the buffered press counts even before the
+	# body leaves the ground, the way Windman's dance breaks on it below. The
+	# press is consumed, so the same Space press never both dismounts and
+	# launches.
+	if is_riding and jump_buffer_timer > 0.0:
+		dismount_bike()
+		jump_buffer_timer = 0.0
+	elif jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_giant:
 		# Set upward velocity for jump. Zero BOTH timers so the same press can't
 		# fire twice (e.g. a coyote jump immediately re-triggering off the buffer).
 		# A jump pushed off from inside a river is weaker (see WADE_JUMP_FACTOR);
@@ -1638,6 +1646,13 @@ func _physics_process(delta: float) -> void:
 			and (input_dir != Vector2.ZERO or jump_buffer_timer > 0.0 or not is_on_floor()):
 		windman_dance_timer = 0.0
 
+	# STEP 7.6: Bike rental — E by a `bike_stand` rack mounts (bead
+	# godot-test1-z2yv.7). The named action is polled, not the key, so a rebind
+	# moves it (CLAUDE.md); `try_mount_bike()` refuses anywhere but a rack and
+	# is a no-op while already riding, so a stray press costs nothing.
+	if Input.is_action_just_pressed("mount_bike"):
+		abilities.try_mount_bike()
+
 	# STEP 8: Build this frame's horizontal velocity from input_dir in local space,
 	# rotated into the world by transform.basis. Composed (lateral, forward) is
 	# normalized in get_input_direction() so diagonal speed never exceeds current_speed;
@@ -1688,6 +1703,26 @@ func _physics_process(delta: float) -> void:
 	# STEP 9: Move the character using Godot's built-in physics
 	# This handles collisions automatically
 	move_and_slide()
+
+	# STEP 9.5: THE RENTAL BUDGET AND THE ROOF EDGE (bead godot-test1-z2yv.7).
+	# Distance, not time (ruling 4): the horizontal metres since the last riding
+	# frame come off `bike_range_left`, and the ride ends at zero with a caption
+	# through `world_caption`. A spent budget and a roof are INDEPENDENT edges,
+	# so they are two statements — but `_sheltered()` is called exactly ONCE
+	# here; the block-reason reads below stay the HUD's own.
+	if is_riding:
+		var ridden := Vector2(
+			global_position.x - _ride_last_pos.x,
+			global_position.z - _ride_last_pos.z).length()
+		_ride_last_pos = global_position
+		bike_range_left -= ridden
+		if bike_range_left <= 0.0:
+			dismount_bike()
+			_say_bike_done()
+	if is_riding and _sheltered():
+		# No bike on the HQ ramps: under the roof the ride ends, silently — the
+		# building already announces itself.
+		dismount_bike()
 
 	# STEP 10: Update character animations
 	anim.update_character_animation(delta, input_dir)
@@ -1770,6 +1805,14 @@ func calculate_current_speed() -> float:
 	# Deliberately BEFORE the wading factor: flying over a river is not wading.
 	if windman_boost_timer > 0.0 and not is_on_floor():
 		return WINDMAN_AIR_SPEED
+
+	# THE RENTAL BIKE (bead godot-test1-z2yv.7): its own branch ABOVE is_ducking,
+	# returning the absolute BIKE_SPEED with no CHARACTER_SPEED, no speed_scale,
+	# no gait_mult and no wade factor — the bike is a leveller. The strip never
+	# crosses a river (rivers are BIKE_ROAD_CLEARANCE-class keep-outs), and if a
+	# rider does enter water 14 still beats the 8.5 clamp, so nothing breaks.
+	if is_riding:
+		return BIKE_SPEED
 
 	# Each character has a modest speed stat (see CHARACTER_SPEED) that scales
 	# every grounded gait. Unknown names fall back to 1.0 — a new character
@@ -2566,7 +2609,17 @@ func set_active_character(index: int) -> void:
 	# the first-person view when active (_apply_teibi_scale ends with
 	# `if view_mode == ViewMode.FIRST_PERSON: _apply_view_mode()`), keeping the model hidden and the
 	# camera at the eyes across the switch.
+	# THE RENTAL BIKE STAYS (bead godot-test1-z2yv.7, ruling 5 — the ONE ruled
+	# exception to "transient state clears on switch"): saved before the reset
+	# and restored after, so the new hero mounts the same bike with the same
+	# budget left, and the mesh is re-stated on the swapped scene.
+	var _kept_riding := is_riding
+	var _kept_range := bike_range_left
 	_reset_ability_states()
+	if _kept_riding:
+		is_riding = true
+		bike_range_left = _kept_range
+		_set_bike_drawn(true)
 
 func _sfx(method: String, arg: Variant = null) -> void:
 	"""
@@ -4314,6 +4367,29 @@ const CHARACTER_SPEED := {
 ## and `_ability_windman()` reads it as `player.WINDMAN_AIR_SPEED`.
 const WINDMAN_AIR_SPEED: float = WALK_SPEED * 5.0
 
+## THE RENTAL BIKE (bead godot-test1-z2yv.7, owner rulings 2026-09-20): a mount at
+## a `bike_stand` rack rents a bike for BIKE_COIN_COST coins (no refund) with a
+## BIKE_RANGE_METRES metre distance budget. Like WINDMAN_AIR_SPEED above, the
+## speed is an ABSOLUTE const on its own calculate_current_speed() branch — the
+## bike is a leveller, not a gait, so it takes no CHARACTER_SPEED, no
+## speed_scale, no gait_mult and no wade factor.
+##
+## THE LATTICE ARGUMENT (see docs/bike-rental-spike.md §1): 14.0 sits above the
+## slowest run 9.0 (Teibi: RUN_SPEED x CHARACTER_SPEED 0.9), above BOTH burst
+## peaks 11.05 / 11.48 (species_table.gd burst_factor on the 8.5 clamp), and
+## below the burst run 17.9 (progression.gd) and Air Rush 25 — so riding
+## outruns every predator including a bursting one, while the ability stays
+## the fastest thing in the game.
+const BIKE_SPEED: float = 14.0
+## The rental fare, in coins, charged once at mount. Never refunded.
+const BIKE_COIN_COST: int = 2
+## How far one rental carries the rider, in metres (~5 km, ruling 4: a DISTANCE
+## budget, not a timer). Decremented by horizontal distance ridden.
+const BIKE_RANGE_METRES: float = 5000.0
+## How close to a `bike_stand` marker the mount reaches (rack footprint r = 1.4
+## plus a step).
+const BIKE_MOUNT_REACH: float = 2.5
+
 
 ## Per-character cooldown timers (seconds remaining; 0 = ready). Sized in _ready().
 var ability_cooldowns: Array[float] = []
@@ -4325,6 +4401,19 @@ var ability2_cooldowns: Array[float] = []
 
 ## Windman boost time remaining (seconds; > 0 means the Air Rush is active).
 var windman_boost_timer: float = 0.0
+
+## THE RENTAL BIKE, transient ability state (bead godot-test1-z2yv.7): whether
+## the hero is riding a rented bike, and how many metres of the distance budget
+## are left. NOT a world object — the bike travels with the player, so it can
+## never be chunk content. Cleared by `_reset_ability_states()` on every ending
+## EXCEPT `set_active_character`, which saves and restores both (ruling 5).
+## `player_animation.gd` reads `is_riding` off this node for the pedal pose.
+var is_riding: bool = false
+var bike_range_left: float = 0.0
+## The odometer: the body's position at the end of the last riding frame. The
+## budget burns the horizontal metres between then and now — actual displacement,
+## so standing still burns nothing and a hop burns its length.
+var _ride_last_pos: Vector3 = Vector3.ZERO
 
 ## Seconds left on an Adrenaline speed burst (0 = none running). THE ONE ACTIVE
 ## SKILL WITH NO KEY: it is triggered by a passive event (crossing a streak step
@@ -4714,6 +4803,79 @@ func _reset_ability_states() -> void:
 	abilities._reset_ability_states()
 
 
+func try_mount_bike() -> bool:
+	return abilities.try_mount_bike()
+
+
+## Where the rental bike's mesh lives (bead godot-test1-z2yv.5): the generated
+## `bike.glb`, +X forward with y = 0 at the wheel bottoms.
+const BIKE_SCENE_PATH: String = "res://assets/models/characters/shared_parts/bike.glb"
+
+
+func _bike_node() -> Node:
+	"""
+	The ridden bike's mesh: ONE `Bike` node under CharacterModel, created on
+	first need and kept forever after.
+	"""
+	if character_container == null:
+		return null
+	var bike: Node = character_container.get_node_or_null("Bike")
+	if bike != null:
+		return bike
+	if not ResourceLoader.exists(BIKE_SCENE_PATH):
+		return null
+	var packed := load(BIKE_SCENE_PATH) as PackedScene
+	if packed == null:
+		return null
+	var node := packed.instantiate() as Node3D
+	if node == null:
+		return null
+	# The mesh is modelled +X-forward; the hero faces -Z. Yawed once, here, so
+	# every show below is just a visibility flip.
+	node.rotation.y = PI / 2.0
+	node.name = "Bike"
+	node.visible = false
+	character_container.add_child(node)
+	return node
+
+
+func _set_bike_drawn(shown: bool) -> void:
+	"""Show or hide the ridden bike — the swords' toggle, for the saddle.
+
+	Null-safe like `_set_primm_swords_drawn` (player_abilities.gd): the node may
+	be missing when no ride ever started, and a reset is unconditional, so a
+	missing node is a no-op rather than a failure. Re-stated on every reset and
+	after every `set_active_character`, because the new hero's scene carries no
+	`Bike` of its own — the node lives under the player's CharacterModel
+	container, NOT inside a hero scene, and survives the swap.
+	"""
+	var bike := _bike_node()
+	if bike != null and "visible" in bike:
+		bike.visible = shown
+
+
+func dismount_bike() -> void:
+	"""End the ride: clear the transient state and hide the mesh.
+
+	Idempotent — every dismount edge (jump, roof, spent budget, and all the
+	`_reset_ability_states()` endings) funnels through here, and a double edge
+	in one frame must not double anything.
+	"""
+	is_riding = false
+	bike_range_left = 0.0
+	_set_bike_drawn(false)
+
+
+func _say_bike_done() -> void:
+	"""The spent-budget caption, through `world_caption` — null-safe group +
+	`has_method`, so a scene with no caption (or the player run standalone)
+	simply ends the ride silently.
+	"""
+	var caption := get_tree().get_first_node_in_group("world_caption")
+	if caption != null and caption.has_method("post_caption"):
+		caption.call("post_caption", tr("The bike is done"))
+
+
 func _revert_teibi_to_normal() -> void:
 	abilities._revert_teibi_to_normal()
 
@@ -5020,6 +5182,10 @@ const ABILITY_BIT_SLASH: int = 1 << 3
 ## Windman's dance (bead godot-test1-b7eg) — the next free bit, room-wide by the
 ## katana-pose ruling: an emote nobody else sees is pointless in co-op.
 const ABILITY_BIT_DANCE: int = 1 << 4
+## The rental bike (bead godot-test1-z2yv.7) — the next free bit, room-wide like
+## the dance: a bike nobody else sees is pointless in co-op. z2yv.8 only READS
+## it; emitting costs nothing today. 32 stays inside mp_codec's 0..255 clamp.
+const ABILITY_BIT_BIKE: int = 1 << 5
 
 
 func ability_visual_state() -> int:
@@ -5039,6 +5205,8 @@ func ability_visual_state() -> int:
 		bits |= ABILITY_BIT_SLASH
 	if windman_dance_timer > 0.0:
 		bits |= ABILITY_BIT_DANCE
+	if is_riding:
+		bits |= ABILITY_BIT_BIKE
 	return bits
 
 

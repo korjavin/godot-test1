@@ -496,6 +496,57 @@ func _flash_blocked_feedback(slot: int = 0) -> void:
 	player._sfx("play_buzz")
 
 
+func try_mount_bike() -> bool:
+	"""Rent the bike at the nearest `bike_stand` rack (bead godot-test1-z2yv.7).
+
+	The nearest bare Node3D in group `bike_stand` (PR #461: metas `anchor: int`
+	and `pos: Vector3`) within BIKE_MOUNT_REACH mounts: 2 coins, charged with
+	`travel_to_waypoint`'s arithmetic (`record_coins` snapshotted first, the
+	displayed figure clamped at zero), the full distance budget, the mesh shown.
+	NO refund ever — a spent budget simply ends the ride silently at zero.
+
+	Refusals, each silent except the poor one: already riding (no-op — notably
+	NOT a paid budget refill), no rack in reach (no charge), fewer than
+	BIKE_COIN_COST coins (the "Not enough coins" toast through `landmark_toast`,
+	the same widget and rule as `_say_travel_too_poor`). Reads the marker's
+	`pos` meta and hashes nothing, so no RNG stream moves.
+	"""
+	if player.is_riding:
+		return false
+	var best: Node3D = null
+	var best_d: float = player.BIKE_MOUNT_REACH
+	for stand: Node in player.get_tree().get_nodes_in_group("bike_stand"):
+		var spos: Vector3
+		if stand.has_meta("pos"):
+			spos = stand.get_meta("pos")
+		elif stand is Node3D:
+			spos = (stand as Node3D).global_position
+		else:
+			continue
+		var flat := Vector2(
+			spos.x - player.global_position.x, spos.z - player.global_position.z)
+		if flat.length() <= best_d:
+			best = stand as Node3D
+			best_d = flat.length()
+	if best == null:
+		return false
+	if player.own_coins < player.BIKE_COIN_COST:
+		var toast: Node = player.get_tree().get_first_node_in_group("landmark_toast")
+		if toast != null and toast.has_method("announce"):
+			toast.call("announce", "Not enough coins",
+				tr("Rental costs %d coins.") % player.BIKE_COIN_COST)
+		return false
+	player.record_coins = maxi(player.record_coins, player.own_coins)
+	player.own_coins -= player.BIKE_COIN_COST
+	player.coins_collected = maxi(0, player.coins_collected - player.BIKE_COIN_COST)
+	player.is_riding = true
+	player.bike_range_left = player.BIKE_RANGE_METRES
+	player._ride_last_pos = player.global_position
+	player._set_bike_drawn(true)
+	player._sfx("play_coin")
+	return true
+
+
 func _ability_windman() -> bool:
 	"""Air Rush: launch up and forward, then soar fast with softened gravity.
 
@@ -1126,6 +1177,13 @@ func _spawn_ability_effect(pos: Vector3, color: Color, max_radius: float, lifeti
 
 func _reset_ability_states() -> void:
 	"""Clear transient ability state on respawn (air boost, air sight, giant/small form, stink pose, dance)."""
+	# THE RENTAL BIKE ENDS HERE TOO (bead godot-test1-z2yv.7, ruling 5): every
+	# `_reset_ability_states()` caller is a dismount edge — tax contact, respawn,
+	# capture, prison in-out, run end, hop, join, the HQ knockback — EXCEPT
+	# `set_active_character`, which saves and restores around this call.
+	player.is_riding = false
+	player.bike_range_left = 0.0
+	player._set_bike_drawn(false)
 	player.windman_boost_timer = 0.0
 	player.speed_burst_timer = 0.0
 	player._pending_cooldown_refund = 0.0
