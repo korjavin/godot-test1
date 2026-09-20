@@ -274,6 +274,37 @@ const GAIT_SKIN: Dictionary = {
 	# out as the stride opens (a walker does not also sway on the spot).
 	"shift_hz": 0.13,
 	"shift_deg": 2.2,
+	# --- PEDAL ----------------------------------------------------------------
+	# The rental-bike seat (bead godot-test1-z2yv.6): ONE pose for all four
+	# heroes, per-hero flavour free from the caller's cadence. Thighs sit at
+	# the seat angle and rock through the stroke in antiphase, calves stay
+	# folded, upper arms reach forward to the bars, the spine leans in.
+	# The seat angle of the thigh, degrees forward of standing.
+	#
+	# 68 + 20 STAYS UNDER THE RIG'S 90-DEGREE EULER CEILING, and that bound
+	# is load-bearing, not aesthetic: past 90° `get_euler()` folds the read
+	# (a 95° thigh reads back 85° on all four heroes — measured), so a seat
+	# any deeper turns the quarter-phase spread the self-check holds into a
+	# number with no margin. Every existing pose respects the same ceiling
+	# (the deepest is the dance's 80°); with 68/20 the spread reads exactly
+	# 2x the stroke and the bead's antiphase formula keeps its 0.8 margin.
+	"pedal_hip_deg": 68.0,
+	# The stroke each way off the seat angle, degrees — legs in antiphase, so
+	# the pair opens 2x this at the quarter phases.
+	"pedal_stroke_deg": 20.0,
+	# The folded knee at mid-stroke, degrees of flex (negative X, the
+	# locomotion knee's own sign). Rocked by the stroke with its thigh: a knee
+	# is deepest where its leg is furthest forward.
+	"pedal_knee_deg": 60.0,
+	# Both upper arms forward to the handlebars, degrees about the skeleton's
+	# +X — the stink raise's own axis, held rather than telegraphed. The
+	# forearms ride at `elbow_bend_deg`, the neutral every path already holds.
+	"pedal_arm_deg": 45.0,
+	# The torso over the bars, degrees. Written on `spine_02`'s X with the
+	# LIMB sign flipped: a limb hangs down -Y so +X carries it forward, while
+	# the spine stands +Y so forward is -X (Basis Rot_x takes +Y toward +Z,
+	# and the heroes face -Z). The head is never written — it stays level.
+	"pedal_lean_deg": 15.0,
 }
 
 ## Euler component indices, so the writes below read as axes rather than as 0/1/2.
@@ -639,6 +670,59 @@ func dance(phase: float, amount: float) -> void:
 		_set_axis(LOWERARM[side], AXIS_X,
 				lerp(_axis(LOWERARM[side], AXIS_X),
 						_deg("dance_elbow_deg") + _deg("dance_pump_deg") * sin(2.0 * phase), amount))
+
+
+func pedal(phase: float, amount: float) -> void:
+	"""The rental-bike seat (bead godot-test1-z2yv.6): ONE seated pedalling
+	pose for all four heroes — thighs at the seat angle rocking through the
+	stroke in antiphase, calves folded, feet level, both upper arms forward
+	to the bars, torso leaned in, head level.
+
+	EASED at `amount` in `air()`'s idiom: each axis lerps from its CURRENT
+	angle toward the pedalled one, so mounting (0 to 1) and dismounting (1 to
+	0) are transitions, never snaps. A REMOTE mirror with no clock of its own
+	calls this at 1.0, the legs-snap convention rather than an envelope.
+
+	Bones by name, like every pose in this file — no per-hero table, no
+	per-bone axis table (see the roll trap in the banner). Per-hero flavour
+	comes free from the caller's cadence (`GAITS[hero].stride_rate`). The arm
+	ROLL (Z) is deliberately never written: the bars hold the hands, and the
+	walk's `drop_wings()` owns that axis on the ground.
+
+	@param phase: the pedalling cycle, radians — one hero's cadence times the
+	                caller's clock, so the legs oppose at PI apart.
+	@param amount: 0.0 leaves the pose untouched, 1.0 seats it fully.
+	"""
+	# THE TORSO FIRST. The stride soils the pelvis (drop/twist), the spine's
+	# counter-rotation, the chest's breath and the clavicles' swing, and none
+	# of the seats below rewrites those — a seat drawn over them would
+	# remember the last walking frame instead of being a pure function of
+	# (phase, amount). So the torso settles the way the other clocked seats
+	# do (`air`, `sidestep`), and both clavicle yaws ease back to rest with
+	# it, all at `amount` like the rest. The spine's lean is written after,
+	# over the settled triple.
+	_settle_torso(amount)
+	var hip: float = _deg("pedal_hip_deg")
+	var stroke: float = _deg("pedal_stroke_deg")
+	var knee: float = _deg("pedal_knee_deg")
+	for side: String in ["left", "right"]:
+		var push: float = sin(phase) if side == "left" else sin(phase + PI)
+		var thigh: float = hip + stroke * push
+		var calf: float = -(knee + stroke * push)
+		_set_axis(THIGH[side], AXIS_X,
+				lerp(_axis(THIGH[side], AXIS_X), thigh, amount))
+		_set_axis(CALF[side], AXIS_X,
+				lerp(_axis(CALF[side], AXIS_X), calf, amount))
+		_set_axis(FOOT[side], AXIS_X,
+				lerp(_axis(FOOT[side], AXIS_X), _ankle(thigh, calf), amount))
+		_set_axis(UPPERARM[side], AXIS_X,
+				lerp(_axis(UPPERARM[side], AXIS_X), _deg("pedal_arm_deg"), amount))
+		_set_axis(LOWERARM[side], AXIS_X,
+				lerp(_axis(LOWERARM[side], AXIS_X), _deg("elbow_bend_deg"), amount))
+		_set_axis(CLAVICLE[side], AXIS_Y,
+				lerp(_axis(CLAVICLE[side], AXIS_Y), 0.0, amount))
+	_set_axis(SPINE, AXIS_X,
+			lerp(_axis(SPINE, AXIS_X), -_deg("pedal_lean_deg"), amount))
 
 
 func sidestep(splay: float, reach: float, lift_left: bool, lift: float,
