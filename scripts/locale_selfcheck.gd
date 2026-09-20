@@ -83,6 +83,14 @@ const WIDTH_BUDGETS: Array = [
 	["Join", 18, 320.0, "MP panel button"],
 	["Hero", 18, 320.0, "MP panel label"],
 	["Copy", 18, 320.0, "MP panel button"],
+	# The Sync / claim-code section (bead godot-test1-i8yu.6): heading, caption
+	# and action button, plus the two transient status lines on the autowrapping
+	# status label (budgeted like "Tap a room to join" above rather than exempt).
+	["Sync / claim code", 18, 320.0, "MP panel label"],
+	["Your code", 18, 320.0, "MP panel label"],
+	["Use this code", 18, 320.0, "MP panel button"],
+	["Claim code adopted", 18, 320.0, "MP panel status"],
+	["That claim code is not valid", 18, 320.0, "MP panel status"],
 	["Leave room", 18, 320.0, "MP panel button"],
 	["Tap a room to join", 18, 320.0, "MP panel status"],
 	["Voice: always on", 18, 320.0, "MP panel voice toggle"],

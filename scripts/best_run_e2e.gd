@@ -93,7 +93,7 @@ func _run() -> void:
 	# guard — a regenerated or malformed id means every request 400s and the whole
 	# feature silently does nothing.
 	var id := store.player_id()
-	if id.length() != BestRunStore.PLAYER_ID_HEX_LEN or not id.is_valid_hex_number():
+	if not BestRunStore.is_valid_player_id(id):
 		_finish(1, "BEST_RUN FAILED: player id '%s' is not %d hex characters"
 			% [id, BestRunStore.PLAYER_ID_HEX_LEN])
 		return
