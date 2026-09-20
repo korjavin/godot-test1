@@ -527,13 +527,23 @@ func _animate(delta: float) -> void:
 	The phase advances by DISTANCE walked (speed * delta), not by raw time, so
 	the stride matches the ground the peer is covering at any speed and cannot
 	drift — the same trick fauna_manager.gd uses for its herds.
+
+	THE RENTAL BIKE (bead godot-test1-z2yv.8, owner ruling 6): while the
+	presence `ab` bit `ABILITY_BIT_BIKE` is set the peer pedals
+	(`_rig.pedal(stride_phase, 1.0)`) and its `Bike` mesh shows. Priority:
+	BIKE before the locomotion branch (a rider is not a runner) and after
+	FLYING — the airborne return runs first, so a flying rider draws wings,
+	while an airborne rider WITHOUT the wing bit still pedals, the local
+	`is_riding`-first dispatch's mirror.
 	"""
 	if _rig == null:
 		return
 
 	_skin_clock += delta
 
-	if not on_floor:
+	var biking: bool = bool(ability_bits & PLAYER_SCRIPT.ABILITY_BIT_BIKE)
+	var flying: bool = bool(ability_bits & PLAYER_SCRIPT.ABILITY_BIT_FLYING)
+	if not on_floor and (not biking or flying):
 		# Airborne: legs tucked forward, arms rolled out sideways. Static, like
 		# the player's jump pose minus the wing flap (which is driven by the
 		# player's own animation clock — a remote peer has no such clock, and a
@@ -556,6 +566,7 @@ func _animate(delta: float) -> void:
 		_apply_slash_pose()
 		_apply_dance_pose(delta)
 		_relax_gait_extras()
+		_set_bike_drawn(false)
 		return
 
 	# Grounded: clear the airborne arm roll, then swing on the X axis only.
@@ -563,6 +574,25 @@ func _animate(delta: float) -> void:
 
 	stride_phase += move_speed * delta * STRIDE_FREQUENCY \
 			* (float(_gait["stride_rate"]) / DEFAULT_STRIDE_RATE)
+
+	# THE RENTAL BIKE (bead godot-test1-z2yv.8): a rider is not a runner, so
+	# this outranks the locomotion branch below — and the stride behind it has
+	# already advanced by distance, which is the phase `pedal()` rides. Shown
+	# for the frame; the edge back hides below beside the locomotion (the
+	# `drop_wings()` precedent: the next gait frame reclaims every bone the
+	# seat wrote, so hiding is the only explicit undo).
+	if biking:
+		_hand_over_clock()
+		_relax_gait_extras()
+		if _rig.has_method("pedal"):
+			_rig.pedal(stride_phase, 1.0)
+		if character_body:
+			character_body.position.y = 0.0
+		_set_bike_drawn(true)
+		_apply_slash_pose()
+		_apply_dance_pose(delta)
+		return
+	_set_bike_drawn(false)
 
 	# Amplitude scales with speed up to FULL_STRIDE_SPEED, so slowing to a stop
 	# eases the pose back to rest instead of freezing it mid-stride.
@@ -660,6 +690,49 @@ func _set_avatar_swords_drawn(drawn: bool) -> void:
 		left.visible = drawn
 	if right != null and "visible" in right:
 		right.visible = drawn
+
+
+func _bike_node() -> Node:
+	"""
+	The ridden bike's mesh (bead godot-test1-z2yv.8, owner ruling 6: TEAMMATES
+	MUST SEE THE BIKE): ONE `Bike` node under `model_root`, created on first
+	need and kept forever after — the local `_bike_node()`'s shape, read off
+	`PLAYER_SCRIPT.BIKE_SCENE_PATH` so the two can never name different files.
+
+	Under `model_root`, NOT inside the character scene, so a hero swap
+	(`set_character()` frees only `character_node`) keeps the saddle. Yawed
+	once here (+X-forward mesh, -Z-facing hero), so every frame below is a
+	visibility flip. Null-safe before `setup()`; a missing resource is a
+	hidden ride rather than an error, and the isolation walk (`mp_selfcheck`
+	check 1) covers the instanced subtree: meshes only, no groups, no
+	`CollisionObject3D`.
+	"""
+	if model_root == null:
+		return null
+	var bike: Node = model_root.get_node_or_null("Bike")
+	if bike != null:
+		return bike
+	var path: String = String(PLAYER_SCRIPT.BIKE_SCENE_PATH)
+	if not ResourceLoader.exists(path):
+		return null
+	var packed := load(path) as PackedScene
+	if packed == null:
+		return null
+	var node := packed.instantiate() as Node3D
+	if node == null:
+		return null
+	node.rotation.y = PI / 2.0
+	node.name = "Bike"
+	node.visible = false
+	model_root.add_child(node)
+	return node
+
+
+func _set_bike_drawn(shown: bool) -> void:
+	"""Show or hide the ridden bike — the swords' toggle, for the saddle."""
+	var bike := _bike_node()
+	if bike != null and "visible" in bike:
+		bike.visible = shown
 
 
 func _hand_over_clock(arm_rate: float = 0.0, leg_rate: float = 0.0) -> void:
