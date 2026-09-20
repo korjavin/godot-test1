@@ -289,7 +289,11 @@ const LANE_GAP_CHUNK := Vector2i(13, -2)
 ## stations between the connector skip and the pass gap. (31337 used to hold
 ## two — a lone lane segment plus a gate walk's first 25 m; round 2's gate
 ## lanes absorbed the walk stub, so it graduated back under the bar.)
-const SMALL_PIECES_PINNED := {123456: 2}
+## 555: the HQ door's lane shares its approach across two trunks (HQ→approach
+## and HQ→spawn ride the same door-to-road stations), so the one 10 m stub the
+## shared approach paints before its river gap counts twice — one world stub,
+## two census pieces, both ending at segment 2 on water.
+const SMALL_PIECES_PINNED := {123456: 2, 555: 2}
 
 ## THE A/B FIELD: a 4x4 band of chunks off the road's north side on `SEEDS[0]`,
 ## chosen because it holds every kind of chunk check 1 needs — four carrying path
@@ -314,8 +318,14 @@ const SMALL_PIECES_PINNED := {123456: 2}
 ## onto lanes and walks, and no chunk of that band draws geometry without a
 ## pole any more. x -7..-3 keeps the 4-wide shape and adds the column holding
 ## chunk (-7, 4), which draws a walk share with no pole on seed 20260904.
-const AB_X: Array[int] = [-7, -6, -5, -4, -3]
-const AB_Y: Array[int] = [3, 4, 5, 6]
+## RE-DERIVED for `godot-test1-pnvb.8`: the HQ door's lane moved the paint onto
+## the road's stations, and the old band's west side draws nothing any more.
+## x 3..7, y -1..2 keeps the 5x4 shape east of the door on seed 20260904: nine
+## chunks draw lane shares, eleven draw nothing, and (5, 1) and (7, -1) draw
+## shares with no pole — the mix the controls screen for, counted with empty
+## obstacles like above.
+const AB_X: Array[int] = [3, 4, 5, 6, 7]
+const AB_Y: Array[int] = [-1, 0, 1, 2]
 
 ## The CUBE bucket's node name — `ChunkBatch._emit_kind_multimesh` keeps the bare
 ## name for CUBE and suffixes every other kind, and this family builds CUBEs only.
@@ -494,18 +504,14 @@ const DRAWN_CHAIN_SEEDS: Array[int] = [20260904, 777, 4242, 1, 424242, 999983, 7
 ## THERE ("no longer sealed — move it to the green list") or in the other class,
 ## so the record can never rot: a future walk-level fix has to touch this list.
 const DRAWN_CHAIN_SEALED := {
-	# Bead godot-test1-pnvb.9 re-survey, on the places-only graph: seed 1's door
-	# circle is massif-pocketed (both HQ walks die mountain) and 42/424242 are
-	# pnvb.8's HQ-side seals (that bead's, P3) — all three stay, all exhausted.
-	# 99999 came out THERE through the canyon in round 1 and moved to the
-	# green list, per the check's own rule. Round 2's gate lanes recovered seed
-	# 2 and the four road-refused worlds (20260904, 4242, 750, 99): a lane
-	# cannot be refused, so their chains are THERE and they moved to the green
-	# list the same way — 555 is not in this sweep and stays pnvb.8's, by owner
-	# ruling 2026-09-20.
-	1: ["hq massif pocket and gate wall", "exhausted"],
-	424242: ["hq massif", "exhausted"],
-	42: ["hq in mountain biome", "exhausted"],
+	# Bead godot-test1-pnvb.8 (the HQ door's lane — door-plus-road-circle pairs
+	# ride the road's own stations through the canyon): seeds 1, 424242 and 42
+	# come out THERE and move to the green list, per the check's own rule, so
+	# the list is EMPTY and the green half below covers every seed in the
+	# sweep. 99999 came out THERE through the canyon in pnvb.9 round 1; round
+	# 2's gate lanes recovered seed 2 and the four road-refused worlds
+	# (20260904, 4242, 750, 99) the same way. 555 is not in this sweep and
+	# stays pnvb.8's, by owner ruling 2026-09-20.
 }
 
 ## T4's ceiling on the trunk memo, in STATIONS across the whole world. Measured on
@@ -2486,6 +2492,13 @@ func _check_crossing_angle_rule(terrain_script: GDScript) -> void:
 	of the origin, so at least one lane per sweep must span a negative road
 	station — the round-2 sentinel, moved to where the seam is now exercised.
 
+	Bead `godot-test1-pnvb.8` widens the WALK census (the ban and the refusal
+	half) from SEEDS to DRAWN_CHAIN_SEEDS, and that is repair, not chase: the
+	HQ door's lane retired the CI seeds' last road deaths, and a sweep with no
+	refusal in it asserts nothing. The list is the drawn chain's own fixed
+	sweep, not a new one, and the ban is stronger for it (more walks judged,
+	same 45-degree rule).
+
 	Retired WITH the last crossing: the fail-on-zero-crossings (C3 measured
 	zero mid-span crossings on every CI seed — lanes do not cross and no walk
 	is asked to), and the explicit `road_station_near` negative-index probe
@@ -2499,7 +2512,12 @@ func _check_crossing_angle_rule(terrain_script: GDScript) -> void:
 	var crossings: int = 0
 	var neg_station: int = 0
 	var roads: int = 0
-	for seed_value: int in SEEDS:
+	# Bead `godot-test1-pnvb.8`: the drawn chain's own fixed sweep, not SEEDS.
+	# The HQ door's lane retired the CI seeds' last road deaths — every edge on
+	# all three CI seeds is a lane now (measured 7/7, 6/6, 7/7) — so the ban
+	# and the refusal half below held for free on SEEDS. Same rule, more
+	# walks judged; the lane and seam halves ride along unchanged.
+	for seed_value: int in DRAWN_CHAIN_SEEDS:
 		var terrain: Node3D = _terrain(terrain_script, seed_value, true)
 		var anchors: Array = terrain.bike_anchors()
 		var edges: Array = terrain.bike_edges()

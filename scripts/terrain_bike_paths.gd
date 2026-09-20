@@ -513,6 +513,12 @@ const TRUNK_MIN_STATIONS: int = 2
 ## with no per-seed side choice. `bike_path_selfcheck` B1 pins the sign.
 const TRUNK_LANE_OFFSET: float = 18.0
 const TRUNK_LANE_SIDE: float = 1.0
+## The HQ door circle's anchor id (`BikeNetwork.HQ_ANCHOR_ID`'s value, spelled
+## here and not imported: a `const` alias is a parse-time reference — CLAUDE.md
+## Conventions — and `bike_path_selfcheck`'s drawn-chain check already reads the
+## same literal). The door circle is the one KIND_WAYPOINT row that never sits
+## on a road station, so the id is what tells it apart from the road circles.
+const HQ_DOOR_ANCHOR_ID: String = "wp_hq"
 ## How near an anchor must stand to its road station to count as ON the road.
 ## A road circle IS its station's centre verbatim (`terrain_waypoints.gd`), so
 ## the distance is exactly 0; the door circle stands hundreds of metres off and
@@ -1465,6 +1471,122 @@ static func _trunk_gate_lane(terrain: Node3D, anchors: Array[Dictionary], ai: in
 	return stations
 
 
+static func _trunk_hq_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi: int) -> Array[Dictionary]:
+	"""
+	THE HQ DOOR'S LANE (bead godot-test1-pnvb.8) — or [] when this pair is not
+	the door circle plus a road circle, or when the door's approach crosses
+	stone outside the pass.
+
+	@param ai / @param bi: The edge's two anchor indices into `anchors`.
+	@return: `[door] + [road_station(k).center + left * offset for k in
+	           kd..kr] + [circle]`, ordered from `ai` to `bi` — the road's own
+	           line through the canyon, reached by a short approach from the
+	           door circle to the offset of the DOOR's nearest station — or []
+	           when the pair is neither, or when the approach is refused.
+
+	WHY FROM THE DOOR'S NEAREST STATION and not the circle's: the wall this
+	bead routes around stands on the HQ's east exit, while the coin road
+	crosses the same range in its canyon (`MOUNTAIN_ROAD_CLEARANCE`, no massif
+	centre within it by construction). Joining the road at the door's latitude
+	and riding its stations east is what puts the route through that gap; a
+	straight door-to-circle approach would walk at the wall instead.
+
+	THE APPROACH IS THE ONLY GROUND THE ROAD DOES NOT ALREADY CLEAR, so it is
+	the only part that can refuse. Sampled at `BIKE_STATION_SPACING` — the
+	walk's own pitch, not a new number — mountain outside the canyon refuses,
+	with exactly one exemption beside the canyon's: within
+	`TRUNK_APPROACH_RADIUS` of the door, the pocket edge the lane is entitled
+	to leave. That radius is the walk's endpoint entitlement ("the walk may
+	reach its anchor"), reused rather than retyped, and it refuses far earlier
+	than a walk would give up (which skirts up to `TRUNK_DETOUR_MAX` stations
+	before abandoning). A refused approach is [] here and the homing walk
+	below dies mountain as it always has — the seed stays sealed, honestly.
+
+	The circle-to-last-offset stub needs no check: both ends stand inside the
+	canyon clearance (the circle on the centreline, the offset
+	`TRUNK_LANE_OFFSET` off it), so the whole stub is pass ground by
+	construction. The offset stations themselves are canyon by the same
+	arithmetic (`TRUNK_LANE_OFFSET` < `MOUNTAIN_ROAD_CLEARANCE` with 6 m of
+	margin): mountain noise there is the pass, which the walk crosses and the
+	draw tier gaps.
+
+	`road_station_near` is the one station-picking seam (child
+	`godot-test1-pnvb.4`, round 2); the span is warmed like every other road
+	consumer warms it, clamped at `ROAD_TERMINAL_X` like `_trunk_lane`'s. The
+	first station IS the door and the last IS the circle, so `_strict_link`'s
+	exact snap holds and the drawn chain meets to the bit.
+
+	TWO HQ EDGES SHARE ONE APPROACH (HQ→approach and HQ→spawn ride the same
+	door-to-road stations), so their strips overlap exactly over the shared
+	prefix. Benign by construction: identical boxes in identical transforms
+	paint identical pixels, and the second trunk's poles fall on the first's
+	footprints and are skipped — the shared prefix costs boxes, never lies.
+
+	COSTS NO DRAW: arithmetic over the road cache plus `biome_at` reads, which
+	are a pure function of position — the same ground the walk asks.
+	"""
+	var door_end: int = -1
+	var road_end: int = -1
+	if String(anchors[ai].get("id", "")) == HQ_DOOR_ANCHOR_ID \
+			and int(anchors[bi].get("kind", -1)) == 1:
+		door_end = ai
+		road_end = bi
+	elif String(anchors[bi].get("id", "")) == HQ_DOOR_ANCHOR_ID \
+			and int(anchors[ai].get("kind", -1)) == 1:
+		door_end = bi
+		road_end = ai
+	else:
+		return []
+	# The `1` is `BikeNetwork.KIND_WAYPOINT` by value, the `_trunk_lane` idiom;
+	# `.get` (and not `[]`) because a monument link's synthetic rows carry no
+	# id and must fall through here, never throw.
+	var pr: Vector2 = anchors[road_end]["pos"]
+	var nr: Dictionary = road_station_near(terrain, pr)
+	if nr.is_empty():
+		return []
+	if pr.distance_to((nr["station"] as Dictionary)["center"]) > TRUNK_LANE_ANCHOR_SNAP:
+		return []
+	var pd: Vector2 = anchors[door_end]["pos"]
+	var nd: Dictionary = road_station_near(terrain, pd)
+	if nd.is_empty():
+		return []
+	var kd: int = int(nd["k"])
+	var kr: int = int(nr["k"])
+	# The span, warmed contiguously like every other road consumer warms it.
+	var pad: float = BIKE_ROAD_CLEARANCE + terrain._road_spacing() * 2.0
+	terrain._road_extend_to_x(minf(pd.x, pr.x) - pad,
+			minf(maxf(pd.x, pr.x) + pad, terrain.ROAD_TERMINAL_X))
+	var hd: float = float((nd["station"] as Dictionary)["heading"])
+	var cd: Vector2 = (nd["station"] as Dictionary)["center"]
+	var head_off: Vector2 = cd + Vector2(-sin(hd), cos(hd)) * (TRUNK_LANE_SIDE * TRUNK_LANE_OFFSET)
+	var legs: int = maxi(1, int(ceil(pd.distance_to(head_off) / BIKE_STATION_SPACING)))
+	for s in range(legs + 1):
+		var p: Vector2 = pd.lerp(head_off, float(s) / float(legs))
+		if p.distance_to(pd) <= TRUNK_APPROACH_RADIUS:
+			continue
+		if terrain.biome_at(p.x, p.y) == terrain.Biome.MOUNTAIN \
+				and not _in_canyon(terrain, p):
+			return []
+	var stations: Array[Dictionary] = [{ "pos": pd, "heading": hd }]
+	var k: int = kd
+	var step: int = 1 if kd <= kr else -1
+	while true:
+		var st: Dictionary = terrain._road_station(k)
+		var c: Vector2 = st["center"]
+		var h: float = float(st["heading"])
+		stations.append({
+				"pos": c + Vector2(-sin(h), cos(h)) * (TRUNK_LANE_SIDE * TRUNK_LANE_OFFSET),
+				"heading": h })
+		if k == kr:
+			break
+		k += step
+	stations.append({
+			"pos": pr, "heading": float((nr["station"] as Dictionary)["heading"]) })
+	if road_end == ai:
+		stations.reverse()
+	return stations
+
+
 static func _trunk_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi: int) -> Array[Dictionary]:
 	"""
 	THE ROAD'S OWN LINE, OFFSET (bead godot-test1-pnvb.9) — or [] when this pair
@@ -1497,6 +1619,15 @@ static func _trunk_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi
 	`ROAD_TERMINAL_X`: past the terminal there are no stations, only the
 	approach.
 
+	AN HQ-DOOR PAIR (bead godot-test1-pnvb.8: the door circle plus a road
+	circle) is ALSO a lane — `_trunk_hq_lane` above: the road's offset
+	stations from the DOOR's nearest station to the circle's, with a short
+	approach from the door circle to the first of them. The approach is the
+	only ground the road does not already clear, so it is the only part that
+	can refuse (mountain outside the pass and past the door's own
+	`TRUNK_APPROACH_RADIUS`); a refused approach falls through to the walk
+	below and dies mountain as it always has.
+
 	COSTS NO DRAW: arithmetic over the road cache. The span is clamped at
 	`ROAD_TERMINAL_X` (the cache stays honest past it, but no lane ever needs
 	it — every road circle stands west of the terminal).
@@ -1514,6 +1645,12 @@ static func _trunk_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi
 		return []
 	if gate_end >= 0:
 		return _trunk_gate_lane(terrain, anchors, ai, bi, gate_end)
+	# THE HQ DOOR'S LANE (bead godot-test1-pnvb.8): the door circle plus a road
+	# circle rides the road's own stations through the canyon. A refused
+	# approach is [] here and the walk below dies mountain as it always has.
+	var hq: Array[Dictionary] = _trunk_hq_lane(terrain, anchors, ai, bi)
+	if not hq.is_empty():
+		return hq
 	var pa: Vector2 = anchors[ai]["pos"]
 	var pb: Vector2 = anchors[bi]["pos"]
 	var na: Dictionary = road_station_near(terrain, pa)
