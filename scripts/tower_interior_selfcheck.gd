@@ -1268,7 +1268,7 @@ func _check_node_shape() -> void:
 	if areas != want_areas:
 		_fail("the interior has %d Area3D, expected %d (3 pads + %d spine pads + %d cells + 1 press + %d purge + %d riddle lock pads + %d lure pads + %d lift stop + %d dossiers)" % [
 			areas, want_areas, TowerInterior.SPINE_DOORS.size(), TowerGraph.HEROES.size(),
-			lock_pads, lure_pads, lift_stops, TowerDossiers.DOSSIERS.size()])
+			TowerGraph.HEROES.size(), lock_pads, lure_pads, lift_stops, TowerDossiers.DOSSIERS.size()])
 	# ...and EVERY stop stands where the graph says it does. A trigger built on the
 	# wrong storey would still be an `Area3D` and pass the count above, and one built
 	# twice on the same storey would pass a count that only summed.
