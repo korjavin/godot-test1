@@ -150,6 +150,9 @@ const ROWS: Array = [
 	["G", "Second skill (learn it in the skill tree, K): Air Sight, Twin Flash, Shrink Ray, Kimchi Offering.", Mode.DESKTOP],
 	["C", "Cycle the view: over the shoulder, eyes, front.", Mode.DESKTOP],
 	["V", "Voice mic on/off in a multiplayer room (hold to talk in push-to-talk mode).", Mode.DESKTOP],
+	# The rental bike (bead godot-test1-z2yv.7, folding z2yv.10 in): X, beside
+	# WASD under the left hand — and not Y/Z, which swap on German QWERTZ boards.
+	["X", "Rent a bike at a rack (2 coins).", Mode.DESKTOP],
 
 
 

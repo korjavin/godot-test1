@@ -1646,7 +1646,7 @@ func _physics_process(delta: float) -> void:
 			and (input_dir != Vector2.ZERO or jump_buffer_timer > 0.0 or not is_on_floor()):
 		windman_dance_timer = 0.0
 
-	# STEP 7.6: Bike rental — E by a `bike_stand` rack mounts (bead
+	# STEP 7.6: Bike rental — X by a `bike_stand` rack mounts (bead
 	# godot-test1-z2yv.7). The named action is polled, not the key, so a rebind
 	# moves it (CLAUDE.md); `try_mount_bike()` refuses anywhere but a rack and
 	# is a no-op while already riding, so a stray press costs nothing.

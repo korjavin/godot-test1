@@ -27,6 +27,9 @@ extends SceneTree
 
 const PlayerScript: GDScript = preload("res://scripts/player_controller.gd")
 
+## The raw-panel-key registry, borrowed rather than copied — `debug_teleport_selfcheck`'s idiom.
+const CityMapSelfcheck: GDScript = preload("res://scripts/city_map_selfcheck.gd")
+
 const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 var _failures: Array[String] = []
@@ -74,6 +77,7 @@ func _initialize() -> void:
 	await _check_edges(player)
 	await _check_switch_budget(player)
 	_check_visual_bit(player)
+	await _check_key(player)
 	_restore_group("bike_stand", null, real_stands)
 	_report()
 
@@ -425,6 +429,30 @@ func _check_edges(player: Node) -> void:
 	Sentinel.done("edges")
 
 
+## The first physical key an input-map action binds (0 when none) — the turn
+## control presses the KEY, the way a finger does, so every action on it fires.
+func _action_physical_key(action: String) -> int:
+	for event: InputEvent in InputMap.action_get_events(action):
+		var as_key := event as InputEventKey
+		if as_key != null and as_key.physical_keycode != 0:
+			return int(as_key.physical_keycode)
+	return 0
+
+
+func _press_key(physical: int) -> void:
+	var ev := InputEventKey.new()
+	ev.physical_keycode = physical
+	ev.pressed = true
+	Input.parse_input_event(ev)
+
+
+func _release_key(physical: int) -> void:
+	var ev := InputEventKey.new()
+	ev.physical_keycode = physical
+	ev.pressed = false
+	Input.parse_input_event(ev)
+
+
 ## Whether `func fname`'s body (up to the next top-level `func `) contains `call`.
 func _func_calls(text: String, fname: String, call: String) -> bool:
 	var start: int = text.find("func " + fname)
@@ -473,6 +501,101 @@ func _check_switch_budget(player: Node) -> void:
 	_free_stand(stand)
 	_settle(player)
 	Sentinel.done("switch")
+
+
+func _check_key(player: Node) -> void:
+	"""Acceptance 10 (send-back): the mount key is X, shared with nothing.
+
+	X (physical 88): beside WASD under the left hand, and not Y/Z, which swap
+	on German QWERTZ boards. The audit is `city_map_selfcheck` check 1's, both
+	halves: no input-map action shares the key (a rebindable gameplay action
+	colliding is unfixable — both fire, forever), and no raw-keycode panel owns
+	it (E names turn_right, B names the city map — the two mutations). The
+	runtime half drives the SHIPPED poll: an X press mounts, while holding the
+	turn-right key at a rack mounts nothing (the E bug, as a control).
+	"""
+	var key_events: Array = []
+	for event: InputEvent in InputMap.action_get_events("mount_bike"):
+		var as_key := event as InputEventKey
+		if as_key != null:
+			key_events.append(as_key)
+	if key_events.size() != 1:
+		_fail("key: mount_bike binds %d key events, not exactly one — the audit is vacuous"
+			% key_events.size())
+		Sentinel.done("key")
+		return
+	var key: int = int(key_events[0].physical_keycode)
+	# NO early return on a wrong key: the scans below run against WHATEVER key
+	# is bound, so a rebind mutation fails naming the key it collides with
+	# (turn_right for E, the city map for B), not just naming a letter.
+	var key_name: String = OS.get_keycode_string(key)
+	if key != KEY_X:
+		_fail("key: mount_bike is on %s, not X — M-key-E/M-key-B" % key_name)
+	for action: StringName in InputMap.get_actions():
+		if action == "mount_bike":
+			continue
+		for event: InputEvent in InputMap.action_get_events(action):
+			var as_key := event as InputEventKey
+			if as_key == null:
+				continue
+			# BARE PRESSES ONLY, `debug_teleport_selfcheck`'s rule: a modified
+			# chord (Ctrl+X, the editor's ui_cut) is a different chord, not a
+			# collision — the unfixable kind is bare-vs-bare, both firing on one
+			# press forever.
+			if as_key.ctrl_pressed or as_key.alt_pressed or as_key.meta_pressed \
+					or as_key.shift_pressed:
+				continue
+			if int(as_key.keycode) == key or int(as_key.physical_keycode) == key:
+				_fail("key: %s is also bound to the input action \"%s\" — M-key-E names turn_right here" % [key_name, action])
+	var claimed: String = CityMapSelfcheck._owner_claiming(
+		key, CityMapSelfcheck.panel_key_owners())
+	if not claimed.is_empty():
+		_fail("key: %s is already %s — M-key-B names the city map here" % [key_name, claimed])
+	if CityMapSelfcheck._owner_claiming(key, [[[key], "a fake flat owner"]]).is_empty():
+		_fail("key: the scan missed a fake flat owner holding %s — it cannot detect a real collision either" % key_name)
+	if CityMapSelfcheck._owner_claiming(key, [[[[key]], "a fake nested owner"]]).is_empty():
+		_fail("key: the scan missed a fake nested owner holding %s — digits and keypad twins are not really compared" % key_name)
+	# RUNTIME, through the shipped STEP 7.6 poll: an X press mounts ...
+	_settle(player)
+	player.own_coins = 2
+	var stand := _add_stand(player, Vector3(1, 0, 0))
+	# TWO awaits (`wade_selfcheck`'s measured timing gotcha): a press
+	# synthesized from a physics_frame handler is stamped with the NEXT physics
+	# frame, so the first frame misses it and the second mounts.
+	Input.action_press("mount_bike")
+	await physics_frame
+	await physics_frame
+	Input.action_release("mount_bike")
+	if not player.is_riding:
+		_fail("key: an X press at a rack did not mount through the shipped poll")
+		_free_stand(stand)
+		_settle(player)
+		Sentinel.done("key")
+		return
+	# ... while the physical turn-right key at the same rack mounts nothing and
+	# charges nothing. A REAL key event (`parse_input_event`), not
+	# `action_press`: the E bug was one press firing TWO actions, and faking the
+	# action alone cannot replay it. Same two-await stamping as the X probe.
+	_settle(player)
+	player.own_coins = 2
+	var turn_key: int = _action_physical_key("turn_right")
+	if turn_key == 0:
+		_fail("key: turn_right binds no physical key — the control is vacuous")
+		_free_stand(stand)
+		_settle(player)
+		Sentinel.done("key")
+		return
+	_press_key(turn_key)
+	await physics_frame
+	await physics_frame
+	_release_key(turn_key)
+	if player.is_riding:
+		_fail("key: holding turn-right at a rack mounted — the E bug is back")
+	if player.own_coins != 2:
+		_fail("key: holding turn-right at a rack charged %d coins" % (2 - player.own_coins))
+	_free_stand(stand)
+	_settle(player)
+	Sentinel.done("key")
 
 
 func _check_visual_bit(player: Node) -> void:
