@@ -1868,8 +1868,8 @@ func _gather_jail_arrow(jail: int, degraded: bool) -> void:
 		return
 	if degraded and fmod(_stall - STALL_SECONDS, MAZE_FLICKER_PERIOD) >= MAZE_FLICKER_ON:
 		return
-	# The gallery's own centre, off the confinement box the prison role already
-	# derives from the plan — no second lookup of where the block is.
+	# The gallery's own centre, off the block union already derived from the
+	# plan — no second lookup of where the block is.
 	var target: Vector3 = _tower_node.to_global(
 			(TowerInterior.block_min() + TowerInterior.block_max()) * 0.5)
 	var offset := Vector2(target.x - _player_pos.x, target.z - _player_pos.z)

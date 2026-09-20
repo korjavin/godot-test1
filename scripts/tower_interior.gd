@@ -453,9 +453,15 @@ const PAD_TRIGGER_DEPTH: float = 2.4
 ## screen through machinery that exists, one sync packet later. A new verb here
 ## would have been a fifth trust boundary for a thing four already do.
 ##
-## IN THE GALLERY, at its +X end: the prisoner has to leave their own cell to reach
-## it, which is the small act that makes operating it a decision. WHERE that is is
-## read off the gallery's own plan cells (`purge_pad()`), never written down.
+## IN EACH CELL, one pad per cell, toward the back wall and off the stand: the
+## prisoner works it without leaving his own recess, and reaching it is still the
+## small act that makes operating it a decision. WHERE each one is is read off its
+## own cell's plan rect (`purge_pad_for()`), never written down.
+##
+## THE PAD IS AN INTERACTION SPOT ONLY, never a way out: it is a non-solid plate
+## on the floor, and what confines anybody - a full-size rescuer, a shrunk Teibi
+## included - is the cell rect and the prison role's clamp, never a gap in a wall
+## or a door. There is no hole here to slip through at any body scale.
 const PURGE_PAD_SIDE: float = 1.1
 
 ## How long the scattered pack stays scattered, and how far from each teammate the
@@ -1272,6 +1278,12 @@ static var _portrait_materials: Dictionary = {}
 ## `const` data, so one lazy fill is the whole of it.
 static var _block_floor_cache: int = -2       # -2 = not asked yet; -1 = no block
 static var _block_bounds_cache: Variant = null
+## Hero name -> that hero's cell rect in metres (a `_cell_span` dict), `{}` when
+## the hero has no cell. The same lazy-fill contract as `_block_bounds_cache`: the
+## plan is const, so one fill per hero is the whole of it, and the per-frame
+## confinement clamp in `player_controller` costs two dict reads rather than two
+## grid scans.
+static var _cell_bounds_cache: Dictionary = {}
 ## ...and the labyrinth's storeys, filled once by `is_maze_floor()`. null = not
 ## asked yet; the filled value is an `Array[int]` of floor indices.
 static var _maze_floors_cache: Variant = null
@@ -1672,8 +1684,8 @@ static func _block_boxes(plan: Dictionary) -> Array[Dictionary]:
 	The cell block's hand-built parts, as `boxes()` entries on the storey that draws
 	the block.
 
-	@return: The press, four containment frames, the authored staging, the purge
-	        pad, two light panels and the custody scar's rubble — in build order.
+	@return: The press, four containment frames, the authored staging, the four
+	        purge pads, two light panels and the custody scar's rubble — in build order.
 
 	EVERYTHING THE PLAN CAN DRAW IS DRAWN: the corridor's walls, the gallery's, the
 	four recesses' dividers, the four gate masses, their pads and the crawl's lintel
@@ -1744,16 +1756,21 @@ static func _block_boxes(plan: Dictionary) -> Array[Dictionary]:
 			"dynamic": true,
 		})
 
-	# The vent-purge pad. Same plate shape as the four gate pads, in the gallery
-	# rather than the corridor - it is operated from the wrong side of the doors, by
-	# somebody the doors are keeping in.
-	var pad := purge_pad()
-	out.append({
-		"name": "PurgePad",
-		"pos": Vector3(pad.x, top + 0.05, pad.z),
-		"size": Vector3(PURGE_PAD_SIDE, 0.1, PURGE_PAD_SIDE),
-		"color": COLOR_SYSTEM, "collide": false, "floor": floor_index,
-	})
+	# The vent-purge pads, one per cell. Same plate shape as the four gate pads,
+	# and operated from the wrong side of the doors, by somebody the doors are
+	# keeping in - except the doors keep him in his OWN cell now (bead
+	# godot-test1-n85a), so each cell carries its own. Batched like the old
+	# gallery plate: a pad that just sits there spends no draw.
+	for hero: String in TowerGraph.HEROES:
+		var pad := purge_pad_for(hero)
+		if pad == Vector3.ZERO:
+			continue
+		out.append({
+			"name": "PurgePad%s" % hero.capitalize(),
+			"pos": Vector3(pad.x, top + 0.05, pad.z),
+			"size": Vector3(PURGE_PAD_SIDE, 0.1, PURGE_PAD_SIDE),
+			"color": COLOR_SYSTEM, "collide": false, "floor": floor_index,
+		})
 
 	# ---- Light. The block is under the sealed roof and the sun never reaches it.
 	for pair: Array in [["PanelCorridor", "service_stair"], ["PanelGallery", BLOCK_ROOM]]:
@@ -1792,17 +1809,23 @@ static func _block_boxes(plan: Dictionary) -> Array[Dictionary]:
 	return out
 
 
-static func purge_pad() -> Vector3:
+static func purge_pad_for(hero: String) -> Vector3:
 	"""
-	The vent-purge pad's centre, in interior-local metres — the gallery's +X end.
+	One hero's vent-purge pad centre, in interior-local metres - inside his cell.
+
+	Centre-x of the cell rect, 1.5 m off its back wall: off the stand (which is the
+	rect's centre, so benching never lands a prisoner straight onto the plate) and
+	deep inside the `cell_min()`/`cell_max()` clamp box, so the prisoner who lives
+	here can always reach it and nobody confined elsewhere ever can. `Vector3.ZERO`
+	when the hero has no cell - there is no pad to stand on then.
 
 	`y` is the storey's walking surface; the plate itself stands `0.05` over it.
 	"""
-	var floor_index := block_floor()
-	if floor_index < 0:
+	var box := _cell_bounds(hero)
+	if box.is_empty():
 		return Vector3.ZERO
-	var box := _cell_span(plan_room_rect(floor_index, BLOCK_ROOM))
-	return Vector3(box["x1"] - 1.5, FLOOR_Y[floor_index], (box["z0"] + box["z1"]) * 0.5)
+	return Vector3((float(box["x0"]) + float(box["x1"])) * 0.5,
+			FLOOR_Y[block_floor()], float(box["z0"]) + 1.5)
 
 
 static func cell_stand(hero: String) -> Vector3:
@@ -1824,7 +1847,10 @@ static func cell_stand(hero: String) -> Vector3:
 		return Vector3.ZERO
 	var cell := plan_room_rect(floor_index, "cell_%s" % hero)
 	if cell.size == Vector2i.ZERO:
-		return purge_pad() + Vector3(0.0, 0.2, 0.0)
+		var gallery := _cell_span(plan_room_rect(floor_index, BLOCK_ROOM))
+		return Vector3((float(gallery["x0"]) + float(gallery["x1"])) * 0.5,
+				FLOOR_Y[floor_index] + 0.2,
+				(float(gallery["z0"]) + float(gallery["z1"])) * 0.5)
 	var box := _cell_span(cell)
 	return Vector3((box["x0"] + box["x1"]) * 0.5, FLOOR_Y[floor_index] + 0.2,
 			(box["z0"] + box["z1"]) * 0.5)
@@ -1859,14 +1885,14 @@ const BLOCK_INSET: float = 0.4
 
 static func block_min() -> Vector3:
 	"""
-	The prison role's confinement box, low corner, in interior-local metres.
+	The cell block's union box, low corner, in interior-local metres.
 
 	THE GALLERY AND ITS FOUR CELLS AND NOTHING ELSE - everything on the far side of
-	the spine wall, which is where the four identity doors stand: a prisoner may
-	walk the gallery and every cell (that is what makes freeing a CELLMATE possible,
-	and it is the block's second system) but may never step through a spine door,
-	which is the whole of "no solo escape". `tower_interior_selfcheck` re-derives
-	both corners rather than trusting them.
+	the spine wall, which is where the four identity doors stand. This is the box a
+	RESCUER walks: every liberation in the game crosses it. It is NOT the prisoner
+	clamp any more (bead godot-test1-n85a): a benched prisoner is confined to his
+	OWN cell via `cell_min()`/`cell_max()`, and may free nobody, not even himself.
+	`tower_interior_selfcheck` re-derives both corners rather than trusting them.
 	"""
 	var box := _block_bounds()
 	if box.is_empty():
@@ -1876,10 +1902,50 @@ static func block_min() -> Vector3:
 
 
 static func block_max() -> Vector3:
-	"""The confinement box's high corner - see `block_min()`."""
+	"""The block union box's high corner - see `block_min()`."""
 	var box := _block_bounds()
 	if box.is_empty():
 		return Vector3.ZERO
+	return Vector3(float(box["x1"]) - BLOCK_INSET, FLOOR_Y[block_floor()],
+			float(box["z1"]) - BLOCK_INSET)
+
+
+static func _cell_bounds(hero: String) -> Dictionary:
+	"""One hero's cell rect in metres, `{}` when he has none. Lazy per hero."""
+	if _cell_bounds_cache.has(hero):
+		return _cell_bounds_cache[hero] as Dictionary
+	var box := {}
+	var floor_index := block_floor()
+	if floor_index >= 0:
+		var rect := plan_room_rect(floor_index, "cell_%s" % hero)
+		if rect.size != Vector2i.ZERO:
+			box = _cell_span(rect)
+	_cell_bounds_cache[hero] = box
+	return box
+
+
+static func cell_min(hero: String) -> Vector3:
+	"""
+	The prison role's confinement box for ONE prisoner, low corner.
+
+	The hero's own cell rect through `_cell_span`, with the same `BLOCK_INSET` the
+	block box keeps off the wall faces. Exactly `block_min()`'s shape: `Vector3.ZERO`
+	when unbuilt, and the WHOLE BLOCK box for a hero with no cell - which is the
+	degrade `cell_stand()` already chose for him, so the clamp never fights the
+	placement.
+	"""
+	var box := _cell_bounds(hero)
+	if box.is_empty():
+		return block_min()
+	return Vector3(float(box["x0"]) + BLOCK_INSET, FLOOR_Y[block_floor()],
+			float(box["z0"]) + BLOCK_INSET)
+
+
+static func cell_max(hero: String) -> Vector3:
+	"""One prisoner's confinement box, high corner - see `cell_min()`."""
+	var box := _cell_bounds(hero)
+	if box.is_empty():
+		return block_max()
 	return Vector3(float(box["x1"]) - BLOCK_INSET, FLOOR_Y[block_floor()],
 			float(box["z1"]) - BLOCK_INSET)
 
@@ -3553,10 +3619,12 @@ func _build_block() -> void:
 	"""
 	The cell block's trigger volumes and its two labels.
 
-	Four spine pads (polled, like every identity pad in this building) and four cell
+	Four spine pads (polled, like every identity pad in this building), four cell
 	volumes (one-shot, because liberation is a thing you do and not a thing you
-	stand in). Every position is read off the plan, and all of them are parented to
-	the storey that draws the block, so they hide with it.
+	stand in) and four vent-purge pads (polled, one per cell - the prisoner's
+	assist moved in with him, bead godot-test1-n85a). Every position is read off
+	the plan, and all of them are parented to the storey that draws the block, so
+	they hide with it.
 	"""
 	var floor_index := block_floor()
 	if floor_index < 0:
@@ -3576,11 +3644,14 @@ func _build_block() -> void:
 			Vector3(_grid_x(float(cell.x) + 0.5), top + 1.0, _grid_z(float(cell.y) + 0.5)),
 			Vector3(TowerPlans.PLAN_CELL, 2.0, PAD_TRIGGER_DEPTH),
 			_on_spine_enter.bind(gid), _on_spine_exit.bind(gid), floor_index)
-	var pad := purge_pad()
-	_add_area("PurgeTrigger",
-		Vector3(pad.x, top + 1.0, pad.z),
-		Vector3(PURGE_PAD_SIDE, 2.0, PURGE_PAD_SIDE),
-		_on_purge_enter, _on_purge_exit, floor_index)
+	for hero: String in TowerGraph.HEROES:
+		var pad := purge_pad_for(hero)
+		if pad == Vector3.ZERO:
+			continue
+		_add_area("PurgeTrigger%s" % hero.capitalize(),
+			Vector3(pad.x, top + 1.0, pad.z),
+			Vector3(PURGE_PAD_SIDE, 2.0, PURGE_PAD_SIDE),
+			_on_purge_enter, _on_purge_exit, floor_index)
 	for hero: String in TowerGraph.HEROES:
 		var rect := plan_room_rect(floor_index, "cell_%s" % hero)
 		if rect.size == Vector2i.ZERO:
@@ -4037,13 +4108,13 @@ func _on_cell_enter(body: Node3D, hero: String) -> void:
 	the only shape `tower_selfcheck`'s liberation clause admits — a cell hangs off
 	its gallery on an ungated edge precisely so that whoever got there can do this.
 
-	...WITH ONE EXCEPTION, AND IT IS "NO SOLO ESCAPE" (bead godot-test1-3iy.10). A
-	benched multiplayer player plays as their OWN captive inside this block, so
-	walking back into their own recess would be a rescue performed on themselves —
-	the one liberation the owner's ruling forbids. Narrow on purpose: it asks the
-	body whether it is serving the prison role AND whether this is its own cell, so
-	a prisoner still frees every CELLMATE (that is the block's second system) and no
-	ordinary rescue anywhere in the game changes by a frame.
+	...WITH ONE EXCEPTION, AND IT IS "NO SOLO ESCAPE" (beads godot-test1-3iy.10
+	and godot-test1-n85a). A benched multiplayer player plays as their OWN captive,
+	confined to their OWN cell, so a body serving the prison role frees NOBODY -
+	neither itself nor a cellmate. Broad on purpose: the clamp is the geometry and
+	this is the rule, so a cellmate's cell overlapping a prisoner's inset by a
+	frame cannot get past it. No ordinary rescue anywhere in the game changes by a
+	frame, because no ordinary rescuer serves the prison role.
 	"""
 	if not body.is_in_group("player"):
 		return
@@ -4056,8 +4127,7 @@ func _on_cell_enter(body: Node3D, hero: String) -> void:
 	# frame after a build (and in every harness that drives this callback directly)
 	# it is still empty, and the refusal would silently not refuse. The body that
 	# walked in is the body whose identity this rule is about.
-	if "prisoner_active" in body and bool(body.prisoner_active) \
-			and body.has_method("hero_name") and String(body.call("hero_name")) == hero:
+	if "prisoner_active" in body and bool(body.prisoner_active):
 		return
 	_liberate(hero)
 
@@ -4076,7 +4146,9 @@ func _on_purge_exit(body: Node3D) -> void:
 
 func _tick_purge(delta: float) -> void:
 	"""
-	The vent purge: scatter the pack around every teammate. See `purge_pad()`.
+	The vent purge: scatter the pack around every teammate. See `purge_pad_for()` -
+	each cell carries its own pad since bead godot-test1-n85a, and the trigger that
+	named `_purge_body` is whichever one the standing prisoner is on.
 
 	Polled like every other pad in this building, and it fires the moment the
 	cooldown allows rather than on a press — the block has no new input, which is the
