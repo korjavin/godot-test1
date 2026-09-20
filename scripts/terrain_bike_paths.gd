@@ -2427,10 +2427,17 @@ static func _build_rack(terrain: Node3D, anchor_index: int, site: Vector2,
 		"climbable": false,
 	})
 	var stand := Node3D.new()
-	stand.name = BIKE_STAND_MARKER_NAME
+	# SUFFIXED BY ANCHOR, because dedup is by construction: one anchor lives in
+	# exactly one chunk, so the name is unique among siblings and Godot never
+	# @-renames it into a bare class label in someone else's diagnostics.
+	stand.name = "%s%d" % [BIKE_STAND_MARKER_NAME, anchor_index]
 	stand.add_to_group(BIKE_STAND_GROUP)
 	stand.set_meta("anchor", anchor_index)
 	stand.set_meta("pos", Vector3(site.x, 0.0, site.y))
+	# POSITIONED AT THE SITE, chunk-local. A bare marker left at the chunk
+	# origin claims one place in its metas and stands in another — and the
+	# tower's disc counts nodes, so a stand's node and its `pos` must agree.
+	stand.position = Vector3(at.x, 0.0, at.y)
 	parent_chunk.add_child(stand)
 	markers.append(stand)
 	return cube_cursor
