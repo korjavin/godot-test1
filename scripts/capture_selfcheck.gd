@@ -317,6 +317,7 @@ func _run() -> void:
 	await _check_the_set_stays_out_of_the_monotone_store()
 	await _check_a_tower_streamed_in_later_holds_him()
 	await _check_capture_respects_the_rooms_hand()
+	await _check_captive_body_is_no_quarry()
 	await _check_the_ai_says_who_bit()
 	await _check_a_guard_takes_coins_and_ground()
 	await _check_the_sweep_spares_a_guard()
@@ -992,6 +993,71 @@ func _check_capture_respects_the_rooms_hand() -> void:
 	room.queue_free()
 	await process_frame
 	Sentinel.done("capture_respects_the_rooms_hand")
+
+
+# ============================================================================
+# 9b. A CAPTURED BODY IS NOT A QUARRY, AND IT IS NOT RELOCATED (bead godot-test1-xqbk)
+# ============================================================================
+
+func _check_captive_body_is_no_quarry() -> void:
+	"""
+	The field-window half of bead godot-test1-xqbk: after a grab the peer keeps
+	WEARING the captive (pinned, as today — check 9 forbids a hearts-style switch
+	outside the hand) but the body is no longer a quarry, and the respawn does
+	not teleport it into the team for its last second.
+
+	(a) RoomStub with a one-hero hand, hero taken by `_hunter()`: after
+	`_on_caught_finished()` the player still wears the captive AND
+	`is_quarry()` is false; freed via `set_hero_captive(hero, false)` it is true
+	again (the negative control, so "never a quarry" cannot satisfy this).
+	(b) `_respawn_in_place()` with a RoomStub whose `group_anchor()` returns a
+	far point: the captured body does NOT move (< 1 m); a body with no captive
+	moves to the anchor (bead s86.18's behaviour, re-asserted so the guard cannot
+	pass by relocating nobody).
+	"""
+	_beat_done()
+	var room := RoomStub.new()
+	room.add_to_group("mp")
+	root.add_child(room)
+	var player := await _make_player()
+	var mine: int = TowerGraph.HEROES.find("primm")
+	room.hand = [mine] as Array[int]
+	player.set_active_character(mine)
+	var taken: String = player.hero_name()
+	player.hit_by_crocodile(_hunter())
+	if player.hero_name() != taken:
+		_fail("the capture stepped out of the one-hero hand onto %s — this check needs the field-window state it pins" % player.hero_name())
+	player.is_caught = false
+	player.call("_on_caught_finished")
+	if player.hero_name() != taken:
+		_fail("after _on_caught_finished the peer stopped wearing %s — the field-window body this bead reasons about is gone" % taken)
+	if not player.has_method("is_quarry"):
+		_fail("player has no is_quarry() — the seam the AI reads does not exist")
+	elif bool(player.call("is_quarry")):
+		_fail("%s is captive yet is_quarry() is true — the master's hunters still camp on the worn body" % taken)
+	player.call("set_hero_captive", taken, false)
+	if player.has_method("is_quarry") and not bool(player.call("is_quarry")):
+		_fail("after freeing %s is_quarry() stayed false — the guard would pass by never hunting" % taken)
+	_clear(player)
+	player = await _make_player()
+	player.set_active_character(mine)
+	var far := (player as Node3D).global_position + Vector3(500.0, 0.0, 500.0)
+	room.anchor = far
+	player.call("set_hero_captive", taken, true)
+	var before: Vector3 = (player as Node3D).global_position
+	player.call("_respawn_in_place")
+	var stayed: float = (player as Node3D).global_position.distance_to(before)
+	if stayed >= 1.0:
+		_fail("a captured body was relocated %.1f m toward the group anchor — the last-second teleport into the team" % stayed)
+	player.call("set_hero_captive", taken, false)
+	player.call("_respawn_in_place")
+	var landed: float = (player as Node3D).global_position.distance_to(far)
+	if landed > 15.0:
+		_fail("an uncaptured body landed %.1f m from the group anchor — the s86.18 control moved, so (b) proves nothing" % landed)
+	_clear(player)
+	room.queue_free()
+	await process_frame
+	Sentinel.done("captive_body_is_no_quarry")
 
 
 # ============================================================================

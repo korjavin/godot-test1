@@ -2264,6 +2264,14 @@ func nearest_member_position(from: Vector3) -> Variant:
 	`peer_positions()` deliberately does NOT take the same test: that one is the
 	LOD manager's awake set, and a crocodile standing next to a jumping teammate
 	must stay simulated — it is about coverage, not about scent.
+
+	SKIPS CAPTIVE PEERS TOO (bead godot-test1-xqbk): a presence packet whose `c`
+	is a hero in the room's captive set describes a body in a cell, not a quarry
+	for the field pack — the flag lives in `_peer_state` as `captive`, set in the
+	presence drain from `_captives.has(hero_name_of(c))`. Unknown (a join snapshot
+	names no hero) counts as huntable, exactly like the grounded default above.
+	`peer_positions()` deliberately keeps those peers too: LOD coverage, like the
+	airborne rule.
 	"""
 	if _state != State.IN_ROOM:
 		return null
@@ -2279,6 +2287,36 @@ func nearest_member_position(from: Vector3) -> Variant:
 			continue
 		if not bool(state.get("floor", true)):
 			continue  # Mid-jump: no scent, exactly as for the local player.
+		if bool(state.get("captive", false)):
+			continue  # In a cell: not a quarry for the field pack.
+		var pos: Vector3 = state["pos"] as Vector3
+		var dist_sq: float = from.distance_squared_to(pos)
+		if dist_sq < best_dist_sq:
+			best_dist_sq = dist_sq
+			best = pos
+	return best
+
+
+func nearest_member_position_including_captive(from: Vector3) -> Variant:
+	"""
+	The closest OTHER member including captives — the confined sentry's query.
+
+	A sentry inside the HQ still bites the prisoner (the prison role's game, bead
+	godot-test1-xqbk): `piglet_crocodile_ai` asks here when `is_confined` rather
+	than above. Every other skip (stale, airborne) still applies; only the
+	captive test is lifted. Same key-iterated, allocation-free shape as
+	`nearest_member_position()`.
+	"""
+	if _state != State.IN_ROOM:
+		return null
+	var best: Variant = null
+	var best_dist_sq: float = INF
+	for peer: String in _peer_state:
+		var state: Dictionary = _peer_state[peer]
+		if bool(state.get("stale", false)):
+			continue
+		if not bool(state.get("floor", true)):
+			continue
 		var pos: Vector3 = state["pos"] as Vector3
 		var dist_sq: float = from.distance_squared_to(pos)
 		if dist_sq < best_dist_sq:
@@ -2393,6 +2431,16 @@ static func hero_index(hero: String) -> int:
 		if str((characters[i] as Dictionary).get("name", "")) == hero:
 			return i
 	return -1
+
+
+static func hero_name_of(index: int) -> String:
+	"""
+	The hero name wearing `CHARACTERS[index]`, or `""` when out of range (hostile `c` never reaches here — the presence decoder range-checks — so this is only the join-snapshot/decode gap, never a trust decision).
+	"""
+	var characters: Array = PLAYER_SCRIPT.CHARACTERS
+	if index >= 0 and index < characters.size():
+		return str((characters[index] as Dictionary).get("name", ""))
+	return ""
 
 
 func _on_lobby_heroes(heroes: Dictionary, pool: Array) -> void:
@@ -3455,6 +3503,11 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 		# i.e. a stealth window, where defaulting to grounded is exactly the
 		# behaviour that shipped. See `nearest_member_position()`.
 		"floor": true,
+		# HUNTABLE UNTIL TOLD OTHERWISE, for the same reason: a snapshot names no
+		# hero, so there is no `c` to test against `_captives`, and the first
+		# presence packet is 66 ms away. Defaulting an unknown hero to captive
+		# would make every incumbent briefly unsmellable (bead godot-test1-xqbk).
+		"captive": false,
 	}
 	# Adopt the room's frozen departed-member share with `maxi`, NOT `+=`: every
 	# incumbent replays the same figure, so adding them would multiply it by the
@@ -4129,6 +4182,35 @@ func _send_presence() -> void:
 		_rtc.put_packet(bytes)
 
 
+func _apply_presence_state(from_id: String, state: Dictionary) -> void:
+	"""
+	Fold one DECODED presence packet into `_peer_state` and its avatar (bead godot-test1-xqbk).
+
+	The drain calls this per packet; `mp_selfcheck` calls it with synthetic dicts.
+	`state` is `_decode_presence_dict` output (`p y c s g cc dd ab pz`).
+	Captive-ness comes from `c` against `_captives` via `hero_name_of` — nothing
+	new rides the wire. The avatar is drawn only inside the cell block when
+	captive (`RemoteAvatar.apply_presence_visibility`); `_peer_state` keeps the
+	peer either way so `peer_positions()` (LOD coverage) still lists it while
+	`nearest_member_position()` (quarry) skips it.
+	"""
+	var avatar: RemoteAvatar = _avatars.get(from_id) as RemoteAvatar
+	var _captive_hero: String = hero_name_of(int(state["c"]))
+	var _is_captive: bool = not _captive_hero.is_empty() and _captives.has(_captive_hero)
+	if avatar != null:
+		avatar.receive_state(state["p"], state["y"], state["c"], state["s"], state["g"],
+			state["ab"])
+		avatar.apply_presence_visibility(_is_captive, state["p"])
+	_peer_state[from_id] = {
+		"coins": state["cc"],
+		"dist": state["dd"],
+		"pos": state["p"],
+		"floor": state["g"],
+		"captive": _is_captive,
+		"pz": state["pz"],
+	}
+
+
 func _receive_mesh_packets() -> void:
 	"""
 	Drain the mesh and dispatch each packet to the handler for its kind.
@@ -4224,28 +4306,7 @@ func _receive_mesh_packets() -> void:
 		if state.is_empty():
 			continue
 
-		avatar.visible = true
-		avatar.receive_state(state["p"], state["y"], state["c"], state["s"], state["g"],
-			state["ab"])
-		# Keep this peer's contribution to the shared totals current. The join
-		# snapshot only bootstraps it; from here on presence carries it, and the
-		# values being absolute means a lost packet costs nothing.
-		_peer_state[from_id] = {
-			"coins": state["cc"],
-			"dist": state["dd"],
-			"pos": state["p"],
-			# The on-floor bit the packet has always carried and nothing read.
-			# `nearest_member_position()` skips a peer that is off the ground, so
-			# jumping breaks the scent for a REMOTE member exactly as it does for
-			# the local player (bead godot-test1-s86.15).
-			"floor": state["g"],
-			# Whether this peer is holding the room-wide pause. Kept HERE rather
-			# than in a dictionary of its own so every way a peer leaves the
-			# table — `peer_left`'s erase, `leave()`'s clear, the stale mark a
-			# dead mesh link earns — drops its pause with it, with no fourth
-			# erase site to forget. `_apply_remote_pause()` reads it each frame.
-			"pz": state["pz"],
-		}
+		_apply_presence_state(from_id, state)
 
 
 # =============================================================================

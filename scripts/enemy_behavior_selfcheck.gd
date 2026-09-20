@@ -196,6 +196,7 @@ func _run() -> void:
 	_check_burst_escape()
 	_check_ranged_cadence()
 	_check_hunt_pacing()
+	_check_captive_quarry()
 	_check_scent_tracking()
 	_check_wanderer_adoption(terrain_script)
 	_check_leap_cycle()
@@ -2171,6 +2172,23 @@ func hit_by_crocodile(_attacker: Node = null) -> void:
 	hits += 1
 """
 
+## A quarry that can wear a captive hero (bead godot-test1-xqbk). `captive` true
+## means `is_quarry()` is false — the same shape as `player_controller`, whose
+## real `is_quarry()` reads `captive_heroes.has(hero_name())` and which
+## `capture_selfcheck` pins on the live scene. The AI half (reads the seam, skips
+## the quarry, exempts `is_confined`) is what this file measures.
+const CAPTIVE_STUB_SOURCE: String = """
+extends Node3D
+var hits: int = 0
+var captive: bool = false
+func is_on_floor() -> bool:
+	return true
+func is_quarry() -> bool:
+	return not captive
+func hit_by_crocodile(_attacker: Node = null) -> void:
+	hits += 1
+"""
+
 
 func _probe_hunt_dispatch(hunt_species: String) -> void:
 	"""
@@ -2388,6 +2406,109 @@ const SCENT_DT: float = 0.1
 ## moves and at 6.5 m/s after it stops, is ~50 s. 180 s is a generous ceiling that
 ## still fails a tracker which has stopped closing at all.
 const SCENT_LIMIT_S: float = 180.0
+
+
+func _check_captive_quarry() -> void:
+	"""
+	A body wearing a captive hero is NOT a quarry for the field pack — but it IS
+	for a confined sentry (bead godot-test1-xqbk).
+
+	The quarry test lives ABOVE the behaviour dispatch, so it is probed once with
+	a hunt row and once with a confined tower_guard row, on live bodies through the
+	SHIPPED `_update_chase_state`:
+
+	  (c) hunt row next to a grounded captive-wearing stub: `is_chasing` stays
+	      false over 60 ticks; freed (`captive = false`) the same unit chases
+	      within 60 ticks (the control, so "never chases" cannot satisfy this).
+	  (d) tower_guard row with `set_confinement()` around the SAME captive stub:
+	      `is_chasing` turns true — the `is_confined` exemption, measured not
+	      assumed. (c) is (d)'s negative control: same quarry, unconfined hunter.
+
+	Row-free by construction: nothing here names `captures_hero`, and (m4) —
+	testing that key instead of `is_confined` — fails (c) because the hunter
+	carries it too. The stub's `is_quarry()` restates the player's seam, whose
+	real half `capture_selfcheck` pins on the live scene.
+	"""
+	var hunts: Array[String] = _species_with("hunt")
+	if hunts.is_empty():
+		_fail("no SPECIES row has behavior 'hunt' — the captive-quarry probe has nothing to drive")
+		Sentinel.done("captive_quarry")
+		return
+	var hunt_species: String = hunts[0]
+	var hunt_row: Dictionary = _species_table[hunt_species]
+	var detection: float = float(hunt_row.get("detection_radius", 0.0))
+	if detection <= 0.0:
+		_fail("SPECIES['%s'] has no detection_radius — the probe cannot place its quarry" % hunt_species)
+		Sentinel.done("captive_quarry")
+		return
+	# ---- (c) the field pack refuses a captive quarry ----
+	var stub_script := GDScript.new()
+	stub_script.source_code = CAPTIVE_STUB_SOURCE
+	stub_script.reload()
+	var stub := Node3D.new()
+	stub.set_script(stub_script)
+	stub.set("captive", true)
+	stub.add_to_group("player")
+	root.add_child(stub)
+	if bool(stub.call("is_quarry")):
+		_fail("the captive stub answers is_quarry() true — the probe would measure nothing")
+	var croc: Node = load(CROC_SCENE).instantiate()
+	croc.species = hunt_species
+	root.add_child(croc)
+	croc.global_position = Vector3.ZERO
+	croc.rotation.y = 0.0
+	stub.global_position = Vector3(0.0, 0.0, minf(5.0, detection * 0.5))
+	croc._find_player()
+	for _i in 60:
+		croc._update_chase_state()
+		if croc.is_chasing:
+			_fail("a '%s' chased a captive-wearing quarry 5 m away — the field pack must not hunt a body in a cell" % hunt_species)
+			break
+	# Control: freed, the same unit acquires.
+	stub.set("captive", false)
+	var acquired := false
+	for _i in 60:
+		croc._update_chase_state()
+		if croc.is_chasing:
+			acquired = true
+			break
+	if not acquired:
+		_fail("a '%s' did not chase the SAME quarry freed 5 m away within 60 ticks — the control never acquired, so (c) proves nothing" % hunt_species)
+	_free_hunt_probe(croc, stub)
+	# ---- (d) a confined sentry still bites the prisoner ----
+	if not _species_table.has("tower_guard"):
+		_fail("SPECIES has no 'tower_guard' row — the confinement exemption has nothing to drive")
+		Sentinel.done("captive_quarry")
+		return
+	var guard_row: Dictionary = _species_table["tower_guard"]
+	var guard_detection: float = float(guard_row.get("detection_radius", 0.0))
+	if guard_detection <= 0.0:
+		_fail("the tower_guard row has no detection_radius — (d) cannot place its quarry")
+		Sentinel.done("captive_quarry")
+		return
+	var stub2 := Node3D.new()
+	stub2.set_script(stub_script)
+	stub2.set("captive", true)
+	stub2.add_to_group("player")
+	root.add_child(stub2)
+	var guard: Node = load(CROC_SCENE).instantiate()
+	guard.species = "tower_guard"
+	root.add_child(guard)
+	guard.global_position = Vector3.ZERO
+	guard.rotation.y = 0.0  # forward +Z, down the cone's middle
+	stub2.global_position = Vector3(0.0, 0.0, minf(5.0, guard_detection * 0.5))
+	guard._find_player()
+	guard.set_confinement(guard.global_position, Vector2(20.0, 20.0))
+	var guard_chased := false
+	for _i in 90:  # the cone's 0.6 s spot beat needs ticks before the flag flips
+		guard._update_chase_state()
+		if guard.is_chasing:
+			guard_chased = true
+			break
+	if not guard_chased:
+		_fail("a CONFINED tower_guard did not chase a captive-wearing quarry 5 m down its cone in 90 ticks — the is_confined exemption is missing")
+	_free_hunt_probe(guard, stub2)
+	Sentinel.done("captive_quarry")
 
 
 func _check_scent_tracking() -> void:

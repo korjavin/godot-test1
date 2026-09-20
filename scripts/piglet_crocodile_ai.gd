@@ -1254,6 +1254,10 @@ func _update_chase_state() -> void:
 	var player_is_grounded = true
 	if player_node.has_method("is_on_floor"):
 		player_is_grounded = player_node.is_on_floor()
+	# A body wearing a captive hero is not a quarry for the field pack (bead godot-test1-xqbk): the hero is in a cell, so the hunters must not camp on the body left behind. Confined sentries are exempt — inside the HQ they still bite the prisoner, which is the prison role's game. Row-free: the exemption is `is_confined`, never a species name or `captures_hero`.
+	var player_is_quarry := true
+	if not is_confined and player_node.has_method("is_quarry"):
+		player_is_quarry = bool(player_node.call("is_quarry"))
 
 	# Nearest SMELLABLE quarry, not nearest quarry — the two candidates are judged
 	# INDEPENDENTLY. Letting the nearest one's groundedness stand for both means
@@ -1263,7 +1267,7 @@ func _update_chase_state() -> void:
 	var quarry: Node = player_node
 	chase_target = player_node.global_position
 	var distance_to_player: float = INF
-	if player_is_grounded:
+	if player_is_grounded and player_is_quarry:
 		distance_to_player = global_position.distance_to(chase_target)
 
 	# IN A ROOM, "the player" means "the nearest MEMBER of the room". The master
@@ -1284,7 +1288,12 @@ func _update_chase_state() -> void:
 	# no branch here, because "not smellable" and "not in the room" are the same
 	# answer (`null`, or a nearer grounded member) to this loop.
 	if mp_node != null:
-		var remote: Variant = mp_node.nearest_member_position(global_position)
+		# Confined sentries hunt captives too (the prison role's game above), so they ask including them; the field pack asks without. `has_method`-guarded so a one-method stub still answers the plain query.
+		var remote: Variant = null
+		if is_confined and mp_node.has_method("nearest_member_position_including_captive"):
+			remote = mp_node.call("nearest_member_position_including_captive", global_position)
+		else:
+			remote = mp_node.nearest_member_position(global_position)
 		if remote != null:
 			# Whatever comes back is grounded by construction, so it is a candidate
 			# unconditionally — which is what makes it able to win when the LOCAL
