@@ -13,8 +13,10 @@ extends SceneTree
 ##      latched onto the target, and exactly `TELEPORT_COIN_COST` off the run's
 ##      coins (never off anything monotone).
 ##   2. THE REFUSALS. Target not found, the circle UNDER OUR FEET not found,
-##      standing on nothing, target == current, and too few coins — each moves
-##      nothing and charges nothing, and the last one says so on screen.
+##      standing on nothing, target == current, too few coins, an unavailable
+##      hero, and a room that has not placed the body — each moves nothing and
+##      charges nothing, and EVERY one says why on screen (bead godot-test1-hiyn:
+##      six distinct titles, the too-poor body naming the real own_coins).
 ##   2b. THE ROOM GATE. A joiner whose body the room has not put down yet is
 ##      refused even though its bank already reads — the window a hop would be
 ##      wiped by `_apply_join_placement()`.
@@ -243,11 +245,14 @@ func _check_hop() -> void:
 
 
 func _check_refusals() -> void:
-	"""Check 2 — every refusal the epic's rule requires, each a no-op.
+	"""Check 2 — every refusal the epic's rule requires: a no-op that SAYS WHY.
 
 	Runs after check 1, so the hero is standing on found circle 2 with circles 1
 	and 2 in the mask and nothing else — which is exactly the state the first
-	three cases need.
+	three cases need. Every case below asserts the toast's own title (six
+	distinct — M1 deletes one speaker, M2 collapses them all to one); the too-poor
+	case also asserts the body names the REAL own_coins (M3 formats
+	coins_collected instead).
 	"""
 	var world: Array = _world()
 	if world.is_empty():
@@ -262,7 +267,8 @@ func _check_refusals() -> void:
 	# a. THE TARGET IS NOT FOUND. Circle 0 (the HQ door) has never been walked on.
 	player.own_coins = 100
 	player.coins_collected = 100
-	await _refuses(player, hub, sites, 0, "the target circle is not found")
+	await _refuses_saying(player, hub, sites, 0,
+		"the target circle is not found", "Circle not found yet")
 	# a2. THE CIRCLE UNDER OUR FEET IS NOT FOUND. `standing_on()` is a POSITION
 	# AND NOT A PERMISSION (its docstring), so the hub latches a circle nobody has
 	# found and the mask is what refuses. Reachable in the shipped game:
@@ -271,7 +277,8 @@ func _check_refusals() -> void:
 	# leaving the target half must fail HERE, or only half the rule is tested.
 	var kept_mask: int = player.waypoint_mask
 	player.waypoint_mask = 1 << 1  # ...the TARGET found, the circle we stand on not.
-	await _refuses(player, hub, sites, 1, "the circle under the hero's feet is not found")
+	await _refuses_saying(player, hub, sites, 1,
+		"the circle under the hero's feet is not found", "Not on a found circle")
 	player.waypoint_mask = kept_mask
 	# b. STANDING ON NOTHING. Park the body well clear of every circle and let the
 	# shipped scan re-arm — `standing_on()` must be -1 before this proves anything.
@@ -280,27 +287,78 @@ func _check_refusals() -> void:
 	if int(hub.standing_on()) != -1:
 		_fail("the hub still reports circle %d 400 m away — the off-circle case is untested"
 			% int(hub.standing_on()))
-	await _refuses(player, hub, sites, 1, "the hero is standing on no circle at all")
+	await _refuses_saying(player, hub, sites, 1,
+		"the hero is standing on no circle at all", "Not on a found circle")
 	# c. THE TARGET IS THE CIRCLE UNDER OUR FEET.
 	_stand_on(player, hub, sites, 1)
-	await _refuses(player, hub, sites, 1, "the target is the circle already stood on")
-	# d. TOO FEW COINS — the owner's refusal, and the only one that SPEAKS. The
-	# card is asserted as well as the no-op: without this, deleting the announce
-	# call is a silent pass and the ruling's "refuse with a caption" is unmeasured.
+	await _refuses_saying(player, hub, sites, 1,
+		"the target is the circle already stood on", "You are already here")
+	# d. TOO FEW COINS — the owner's refusal. The card is asserted as well as the
+	# no-op: without this, deleting the announce call is a silent pass and the
+	# ruling's "refuse with a caption" is unmeasured. The body must name the REAL
+	# number — own_coins, the value actually charged, not the bank.
+	player.own_coins = 7
+	player.coins_collected = 700
+	await _refuses_saying(player, hub, sites, 2,
+		"the hero cannot afford the fare", "Not enough coins")
 	var toast: Node = get_first_node_in_group("landmark_toast")
-	if toast != null and "name_label" in toast and toast.name_label != null:
-		toast.name_label.text = ""
-	player.own_coins = cost - 1
-	player.coins_collected = cost - 1
-	await _refuses(player, hub, sites, 2, "the hero cannot afford the fare")
+	if toast == null or not ("fact_label" in toast) or toast.fact_label == null:
+		_fail("no landmark toast body — the too-poor reason cannot be checked")
+	# Word-boundary, not substring: the mutant formats coins_collected (700), and
+	# "700" contains "7" — a substring test passes against the bug (M3).
+	elif not ("have 7." in String(toast.fact_label.text) and str(cost) in String(toast.fact_label.text)):
+		_fail("the too-poor card names \"%s\" — it must name own 7 of %d (M3)"
+			% [String(toast.fact_label.text), cost])
+	elif "700" in String(toast.fact_label.text):
+		_fail("the too-poor card names \"%s\" — that is the bank, not own 7 (M3)"
+			% String(toast.fact_label.text))
+	# e. THE HERO CANNOT TRAVEL — mid-respawn holds the body.
+	player.own_coins = 100
+	player.coins_collected = 100
+	player.is_respawning = true
+	await _refuses_saying(player, hub, sites, 2,
+		"the hero is mid-respawn", "Cannot travel now")
+	player.is_respawning = false
+	Sentinel.done("refusals")
+
+
+func _refuses_saying(player: Node, hub: Node, sites: Array, index: int, why: String, title: String) -> void:
+	"""One refusal: false, nothing moved, nothing charged, and the toast speaks `title`."""
+	_clear_toast()
+	var where: Vector3 = player.global_position
+	var coins: int = player.own_coins
+	var shown: int = player.coins_collected
+	var latched: int = int(hub.standing_on())
+	var moved: bool = await player.travel_to_waypoint(index)
+	if moved:
+		_fail("travel_to_waypoint(%d) FIRED when %s" % [index, why])
+	if player.global_position.distance_to(where) > 0.01:
+		_fail("the refused hop (%s) moved the player %.2f m"
+			% [why, player.global_position.distance_to(where)])
+	if player.own_coins != coins:
+		_fail("the refused hop (%s) charged %d coins" % [why, coins - player.own_coins])
+	if player.coins_collected != shown:
+		_fail("the refused hop (%s) moved the displayed total" % why)
+	if int(hub.standing_on()) != latched:
+		_fail("the refused hop (%s) relatched the hub onto circle %d"
+			% [why, int(hub.standing_on())])
+	var toast: Node = get_first_node_in_group("landmark_toast")
 	if toast == null or not ("name_label" in toast) or toast.name_label == null:
 		_fail("no landmark toast in main.tscn — the spoken refusal cannot be checked")
-	elif String(toast.name_label.text) != "Not enough coins":
-		_fail("the unaffordable hop raised no card (the toast reads \"%s\")"
-			% String(toast.name_label.text))
+	elif String(toast.name_label.text) != title:
+		_fail("the refused hop (%s) raised \"%s\", not \"%s\" (every refusal has its own reason)"
+			% [why, String(toast.name_label.text), title])
 	elif not toast.visible:
-		_fail("the too-poor card was written but the toast is not visible")
-	Sentinel.done("refusals")
+		_fail("the refused hop (%s) wrote its card but the toast is not visible" % why)
+
+
+func _clear_toast() -> void:
+	"""Empty the toast so the next refusal must write its own reason."""
+	var toast: Node = get_first_node_in_group("landmark_toast")
+	if toast != null and ("name_label" in toast) and toast.name_label != null:
+		toast.name_label.text = ""
+	if toast != null and ("fact_label" in toast) and toast.fact_label != null:
+		toast.fact_label.text = ""
 
 
 func _refuses(player: Node, hub: Node, sites: Array, index: int, why: String) -> void:
@@ -431,7 +489,8 @@ func _check_room_gate() -> void:
 	player.own_coins = 100
 	player.coins_collected = 100
 	_stand_on(player, hub, sites, 1)
-	await _refuses(player, hub, sites, 2, "the room has not placed this body yet")
+	await _refuses_saying(player, hub, sites, 2,
+		"the room has not placed this body yet", "Waiting for the room")
 
 	# ...and once the placement has run, travel is an ordinary room-legal move.
 	mp._join_applied = true

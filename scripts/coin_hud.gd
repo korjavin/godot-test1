@@ -2,8 +2,10 @@ extends Label
 ## Score HUD (top-right of the screen): the coin count, and the level strip it
 ## paints under itself.
 ##
-## Each frame this mirrors the player's coin count (the headline score) into the
-## label text. It finds the player through the "player" group rather than a hard
+## Each frame this mirrors the player's OWN coin count (the headline score) into
+## the label text, plus the crew's bank on the SAME line while in a room
+## (bead godot-test1-y77d, round 2: a second line would move the whole HUD
+## stack). It finds the player through the "player" group rather than a hard
 ## reference, matching the rest of the project, so it keeps working across player
 ## respawns.
 ##
@@ -45,8 +47,14 @@ const POP_RECOVER_SPEED: float = 10.0
 ## `STRIP_TOP` is `heading_font().get_height(FONT_SIZE)` — measured 60 — so the
 ## band starts exactly where the text's descent space ends and the strip can never
 ## touch a glyph. The rect in `main.tscn` is 72 px tall, so the band is the bottom
-## 12 px of it.
+## 12 px of it. The crew figure rides on the SAME text line (round 2), so one
+## line is all there ever is and the constant holds in a room too.
 const STRIP_TOP: float = 60.0
+## The separator between the personal figure and the crew figure on the room
+## line: a literal in one const, so the panel, the toast and the width budget
+## cannot drift into three different punctuations.
+const CREW_SEP: String = " · "
+
 
 ## The badge is deliberately TALLER than the band and overhangs it by 6 px at each
 ## end. A badge that fitted the 12 px band would be a bar with a point on it, and
@@ -194,6 +202,16 @@ func _process(delta: float) -> void:
 		var mult: int = player.get_streak_multiplier()
 		if mult > 1:
 			line += " (x%d)" % mult
+		# THE CREW FIGURE, ON THE SAME LINE (bead godot-test1-y77d, round 2).
+		# Drawn only when the player's room_bank() reads non-null — solo the
+		# line is personal alone. Asked through the player so this keeps its
+		# group-lookup-only shape; the bank itself is summed in
+		# mp_manager.shared_bank(). One line, so the strip never moves and the
+		# HUD stack underneath never shifts.
+		if player.has_method("room_bank"):
+			var bank: Variant = player.call("room_bank")
+			if bank != null:
+				line += CREW_SEP + tr("Crew: %d") % int(bank)
 		# ALL CAPS AT THE DRAW SITE and never in `ui.csv`, where the key IS the
 		# English source string — the spec's typography rule, and the reason the
 		# composition above happens into a local rather than into `.text`.

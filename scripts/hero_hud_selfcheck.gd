@@ -235,6 +235,7 @@ func _run() -> void:
 	_check_the_voice_seams_in_a_room()
 	_check_the_hud_theme()
 	_check_the_level_strip()
+	await _check_coin_room_block()
 	_report()
 
 
@@ -1258,7 +1259,8 @@ func _check_the_level_strip() -> void:
 	     above `AbilityHUD`, the widget directly under it. Both numbers live in
 	     `main.tscn` and in `coin_hud.gd`'s consts, which is to say in two files that
 	     no single edit keeps in step; each rule carries the tamper that proves it
-	     bites.
+	     bites. One text line in both states (the room crew figure rides the
+	     same line, round 2): see check 9c for the live half of this.
 	"""
 	# --- a. the strip really reads and really repaints ---------------------------
 	# COMMENTS STRIPPED FIRST, and check 8d's `ponytail:` note is why: a scan that
@@ -1350,6 +1352,95 @@ func _level_strip_band_failures(text: String) -> Array[String]:
 				% [coin_rect.end.y, dial_rect.position.y]
 				+ "strip would be painted over the dial")
 	return out
+
+
+func _check_coin_room_block() -> void:
+	"""
+	9c. THE ROOM LINE (send-back round 2): the crew figure rides on the SAME
+	line as the personal figure — one line, always, so the strip never moves
+	and the HUD stack underneath never shifts.
+
+	A live corner, not a static rect: driven both ways through the SHIPPED
+	script — solo first (the control: personal figure alone, 72 px rect as
+	designed), then a room stub whose bank reads (one line naming both figures,
+	fitting the HUD width budget). Putting the crew figure back on a second
+	line fails the one-line leg (the round's mutation); bloating the line past
+	the hero panel fails the width leg.
+	"""
+	var scene_text := FileAccess.get_file_as_string(MAIN_SCENE_PATH)
+	var coin_rect: Variant = _node_rect(scene_text, "CoinLabel")
+	if coin_rect == null:
+		_fail("main.tscn has lost CoinLabel — the room line is unmeasurable")
+		Sentinel.done("coin_room_block")
+		return
+	# The designed corner at 1280x720, anchors resolving against a sized parent
+	# rather than the headless window — `locale_selfcheck`'s card probe, same
+	# reason.
+	var stage := Control.new()
+	stage.size = Vector2(1280.0, 720.0)
+	root.add_child(stage)
+	var hud := Label.new()
+	hud.set_script(COIN_SCRIPT)
+	hud.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	hud.offset_left = -280.0
+	hud.offset_top = 20.0
+	hud.offset_right = -24.0
+	hud.offset_bottom = 92.0
+	hud.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	hud.grow_vertical = Control.GROW_DIRECTION_END
+	hud.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	var solo := CoinStub.new()
+	solo.add_to_group("player")
+	root.add_child(solo)
+	stage.add_child(hud)
+	await process_frame
+	await process_frame
+	_check(not ("CREW" in hud.text),
+		"the solo control draws a crew figure with no bank — the fixture is not solo")
+	_check(not ("\n" in hud.text),
+		"the solo control spans lines — the fixture moved")
+	_check(absf(hud.size.y - 72.0) < 1.0,
+		"solo CoinLabel is %.0f px tall, not the designed 72 — the fixture moved"
+		% hud.size.y)
+	solo.remove_from_group("player")
+	solo.free()
+	var room := CoinStub.new()
+	room.bank = 1004
+	room.add_to_group("player")
+	root.add_child(room)
+	await process_frame
+	await process_frame
+	_check("CREW" in hud.text and "1004" in hud.text,
+		"the room HUD reads \"%s\" — the room leg is measuring nothing" % hud.text)
+	_check(not ("\n" in hud.text),
+		"the room line split in two — the crew figure belongs on the same line (round 2)")
+	# THE WIDTH BUDGET, live: at 1280 the coin line's right edge sits at 1256
+	# and the hero panel ends at 402 (`main.tscn`), so 854 px is the room the
+	# line has before it collides. German's worst case is `locale_selfcheck`'s
+	# row; this leg holds the English fixture to the same ceiling.
+	_check(hud.get_minimum_size().x <= 854.0,
+		"the room line is %.0f px wide — it collides with the hero panel"
+		% hud.get_minimum_size().x)
+	room.remove_from_group("player")
+	room.free()
+	hud.free()
+	stage.free()
+	Sentinel.done("coin_room_block")
+
+
+## A hero the coin HUD can read: personal coins, a bank that is there solo not
+## at all and in a room, and no streak. `progression` is deliberately absent —
+## the strip's geometry must not depend on the level backend existing.
+class CoinStub extends Node:
+	var coins_collected: int = 5
+	var own_coins: int = 5
+	var bank: Variant = null
+
+	func room_bank() -> Variant:
+		return bank
+
+	func get_streak_multiplier() -> int:
+		return 1
 
 
 func _script_paths() -> PackedStringArray:

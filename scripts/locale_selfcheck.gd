@@ -49,6 +49,7 @@ const StartOverlay := preload("res://scripts/start_overlay.gd")
 ## so a retuned card width retunes the gate rather than drifting from it.
 const WaypointHub := preload("res://scripts/waypoint_hub.gd")
 const PassportPanel := preload("res://scripts/passport_panel.gd")
+const CoinHud := preload("res://scripts/coin_hud.gd")
 ## The skill tree panel, for the budgets below — read off its own constants
 ## rather than retyped, so retuning COLUMN_WIDTH or CARD_WIDTH retunes the gate
 ## with it (bead godot-test1-1m3x: the literals measured the OLD widths while
@@ -178,8 +179,10 @@ const WIDTH_BUDGETS: Array = [
 	# header gives — they autowrap inside a container that grows.
 	["Waypoints", WaypointHub.TITLE_FONT_SIZE, WaypointHub.CARD_WIDTH,
 		"waypoint panel title"],
-	# The price line does NOT wrap: it is one composed line under the rows.
-	["Travel costs %d coins.", WaypointHub.LINE_FONT_SIZE, WaypointHub.CARD_WIDTH,
+	# The price line does NOT wrap: it is one composed line under the rows. Names
+	# the fare AND the hero's own balance (bead godot-test1-hiyn) — the same key
+	# the too-poor toast body uses, so one budget holds both.
+	["Travel costs %d coins, you have %d.", WaypointHub.LINE_FONT_SIZE, WaypointHub.CARD_WIDTH,
 		"waypoint panel price"],
 	# THE ROW NAMES, against what a row leaves the name after the distance column.
 	# `clip_text` means an overflow here eats its own tail rather than running
@@ -416,6 +419,7 @@ func _initialize() -> void:
 	_check_live_switch()
 	_check_locale_config()
 	_check_widths(rows)
+	_check_coin_room_width()
 	_finish()
 
 
@@ -520,6 +524,44 @@ func _check_translations(rows: Array) -> void:
 ## A key with no entry must come back unchanged. This is the whole reason the
 ## keys ARE the English source strings: a string somebody forgets to add to the
 ## CSV renders as readable English, never as a raw identifier.
+func _check_coin_room_width() -> void:
+	"""
+	The coin HUD's ROOM line in German (send-back round 2): the crew figure
+	rides the same line, so the worst case is one wide composed line, not two
+	short ones. Composed from the SHIPPED pieces — `coin_hud`'s separator const
+	and the csv's own German rows, five- and six-figure balances, the SP suffix
+	and a streak multiplier on — and held to the 854 px the line has at 1280
+	before it collides with the hero panel (coin right edge 1256, hero ends
+	402 in `main.tscn`). `hero_hud` 9c holds the live English fixture to the
+	same ceiling; this one holds the language that is always wider.
+	"""
+	var previous: String = TranslationServer.get_locale()
+	TranslationServer.set_locale("de")
+	if TranslationServer.translate("Crew: %d") == "Crew: %d":
+		TranslationServer.set_locale(previous)
+		_fail("\"Crew: %d\" has no German row — the room line's second half would draw English")
+		Sentinel.done("coin_room_width")
+		return
+	var font: Font = HudTheme.heading_font()
+	if font == null:
+		TranslationServer.set_locale(previous)
+		_fail("no heading font — the room-line budget would pass vacuously")
+		Sentinel.done("coin_room_width")
+		return
+	for loc: String in ["de", "en"]:
+		TranslationServer.set_locale(loc)
+		var line: String = (TranslationServer.translate("Coins: %d") % 88888
+			+ TranslationServer.translate("  %d SP") % 88 + " (x5)"
+			+ CoinHud.CREW_SEP + TranslationServer.translate("Crew: %d") % 888888).to_upper()
+		var width: float = font.get_string_size(
+			line, HORIZONTAL_ALIGNMENT_LEFT, -1, CoinHud.FONT_SIZE).x
+		if width > 854.0:
+			_fail("the coin room line is %.0f px wide in %s — past the hero panel (%s)"
+				% [width, loc, line.c_escape()])
+	TranslationServer.set_locale(previous)
+	Sentinel.done("coin_room_width")
+
+
 func _check_fallback() -> void:
 	var restore: String = TranslationServer.get_locale()
 	TranslationServer.set_locale("de")
