@@ -70,12 +70,26 @@ services:
       # One cloud save slot per player (GET/POST/DELETE /save). Same volume as
       # the best file, so one named volume still holds everything.
       LOBBY_SAVE_FILE: ${LOBBY_SAVE_FILE:-/data/save.json}
+      # Magic-link sessions and anon->sub aliases (server/auth.go). Same volume,
+      # so one named volume still holds everything.
+      LOBBY_AUTH_FILE: ${LOBBY_AUTH_FILE:-/data/auth.json}
+      # Where GET /auth/verify?t= lands after minting a session: the game
+      # build's URL on its own host, the session riding a #session= fragment.
+      AUTH_GAME_URL: ${AUTH_GAME_URL:-/}
+      # Outbound mail relay for the sign-in links. Empty host (and no dev
+      # flag) means POST /auth/magic answers 503 — sign-in simply off.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-}
     volumes:
       - lobby_data:/data
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_NETWORK_NAME:-traefik_default}"
-      - "traefik.http.routers.godot-lobby.rule=Host(`${LOBBY_HOST}`) && (Path(`/ws`) || Path(`/ice`) || Path(`/rooms`) || Path(`/best`) || Path(`/save`) || Path(`/healthz`))"
+      - "traefik.http.routers.godot-lobby.rule=Host(`${LOBBY_HOST}`) && (Path(`/ws`) || Path(`/ice`) || Path(`/rooms`) || Path(`/best`) || Path(`/save`) || PathPrefix(`/auth/`) || Path(`/healthz`))"
       - "traefik.http.routers.godot-lobby.priority=10"
       - "traefik.http.routers.godot-lobby.entrypoints=websecure"
       - "traefik.http.routers.godot-lobby.tls.certresolver=${TRAEFIK_CERTRESOLVER:-myresolver}"
