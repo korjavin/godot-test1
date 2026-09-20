@@ -877,10 +877,18 @@ func _check_a_tower_streamed_in_later_holds_him() -> void:
 	# runs at build time and there will be no second build. Getting caught on the
 	# HQ grounds is the likeliest place in the world to be caught at all, so this
 	# is the common case and not the exotic one.
-	# The caught freeze from the first grab is still on: end it the way
-	# `_physics_process` does, or the second grab is correctly ignored as a bite
-	# during invulnerability (which check 3 is the one that measures).
+	# The first grab's grace is still on: end it the way `_physics_process`
+	# does, or the second grab is correctly ignored as a bite during
+	# invulnerability (which check 3 is the one that measures). The freeze
+	# alone is not enough — at `--fixed-fps 2` the tower-build frames above
+	# advance only ~1 sim-second (measured: respawn_timer still 1.067 at the
+	# grab), so a fixed frame count cannot spend the 1.5 s respawn grace and
+	# the 2.5 s blink behind it; the grab below measures the tower push, not
+	# the i-frames (bead godot-test1-jom6).
 	player.is_caught = false
+	player.is_respawning = false
+	player.respawn_timer = 0.0
+	player.respawn_blink_timer = 0.0
 	var second: String = player.hero_name()
 	player.hit_by_crocodile(_hunter())
 	if not player.is_hero_captive(second):
@@ -4077,8 +4085,16 @@ func _check_kimchi_honeypot() -> void:
 	# each, so every leg records progress and the stall watchdog never fires —
 	# the deadline and only the deadline ends it: 24 ticks spend exactly 12 s,
 	# while arrival-relative expiry would hold it for 12 s plus its travel.
-	for _i in 24:
+	# A BOUNDED EDGE-WAIT, not a fixed 24 (bead godot-test1-jom6): a sniff
+	# pause carried in from the staging frames (take_bait does not clear
+	# is_paused) eats a tick in _physics_process without spending _bait_left,
+	# so a fixed count blames the deadline for the pause's work. 30 ticks
+	# (15 s) still end well before arrival-relative expiry (~49 ticks), and
+	# both release mutations below still exceed it.
+	var long_ticks := 0
+	while bool(long.get("is_baited")) and long_ticks < 30:
 		long._physics_process(0.5)
+		long_ticks += 1
 		if bool(long.get("is_baited")):
 			(long as Node3D).global_position = (long as Node3D).global_position.move_toward(jar_pos, 1.6)
 	if bool(long.get("is_baited")):
@@ -4089,8 +4105,15 @@ func _check_kimchi_honeypot() -> void:
 	# Every other probe arrives first — teleported to its own errand target,
 	# not walked, because no frame may pass: the jar for the field and the
 	# guard, the fence point for the boss (a boss never reaches the pot
-	# itself). An arrived body is the state the release is ABOUT, so one 12 s
-	# frame each spends every deadline and the home leg ends every errand.
+	# itself). An arrived body is the state the release is ABOUT, so the probe
+	# ticks the body's OWN _physics_process with explicit half-second deltas
+	# UNTIL the is_baited edge, bounded at 30 ticks (15 s) — the same clock
+	# the release reads, never "await N frames and hope 12 s passed" (bead
+	# godot-test1-jom6: one awaited frame is one frame but an UNBOUNDED amount
+	# of wall clock on a loaded runner). The bound covers the 12 s deadline
+	# plus a staging sniff pause (pause_duration <= 1.2 s, which take_bait
+	# leaves alone and which eats a tick without spending _bait_left), while
+	# a 20 s release or no release still exceeds it.
 	var arrivals: Array = [[chaser, "chaser", Vector3(0.3, 0.0, 0.0)],
 		[tracker, "tracker", Vector3(-0.3, 0.0, 0.0)],
 		[idle, "idle", Vector3(0.0, 0.0, 0.3)],
@@ -4102,14 +4125,14 @@ func _check_kimchi_honeypot() -> void:
 	(boss as Node3D).global_position = boss.get("investigate_target") as Vector3
 	for subject: Array in [[chaser, "chaser"], [tracker, "tracker"],
 			[idle, "idle"], [far, "the late joiner"], [boss, "boss"]]:
-		(subject[0] as Node)._physics_process(KimchiJar.HONEYPOT_SECONDS)
+		_tick_bait_until_released(subject[0] as Node)
 		if bool((subject[0] as Node).get("is_baited")):
 			_fail("%s is still baited past 12 s — release is the home leg, not"
 				% subject[1] + " a second effect")
 		if bool((subject[0] as Node).get("is_investigating")):
 			_fail("%s is still on an errand past 12 s — a field body goes back"
 				% subject[1] + " to wander through _end_investigation()")
-	guard._physics_process(KimchiJar.HONEYPOT_SECONDS)
+	_tick_bait_until_released(guard)
 	if bool(guard.get("is_baited")):
 		_fail("the guard is still baited past 12 s")
 	if not bool(guard.get("is_investigating")):
@@ -4187,6 +4210,19 @@ func _check_kimchi_honeypot() -> void:
 	# A check without these is vacuous (orchestration-2026-09-19 memory: the
 	# four species of vacuous assertion) — each proves the probe CAN do what
 	# the honeypot stopped it doing.
+	# STAGING GRACE RESET (bead godot-test1-jom6): a body stood onto the
+	# player bites across a staging frame (check 10b's lesson in `_plant`),
+	# and the coin-tax bite's respawn grace + blink would make the hunter's
+	# control grab read "jailed 0" on a body that jails fine — measured
+	# flaky at `--fixed-fps 2`, never at normal speed. Ended the way
+	# `_physics_process` does (the mirror check above ends `is_caught` the
+	# same way); a no-op when ungraced, and it cannot mask a hunter defect —
+	# baited, shrunk and fleeing are untouched, and the hit logic itself is
+	# checks 2 and 3's.
+	player.is_caught = false
+	player.is_respawning = false
+	player.respawn_timer = 0.0
+	player.respawn_blink_timer = 0.0
 	(player as Node3D).global_position = \
 		(chaser as Node3D).global_position + Vector3(2.0, 0.0, 0.0)
 	chaser._update_chase_state()
@@ -4248,6 +4284,30 @@ func _assert_honeypot_radius() -> void:
 		_fail("HONEYPOT_RADIUS %.1f reaches past SIM_RADIUS %.1f — one press"
 			% [KimchiJar.HONEYPOT_RADIUS, sim_radius] + " would wake every sleeper"
 			+ " in the ball")
+
+
+func _tick_bait_until_released(body: Node) -> void:
+	"""
+	Spend a baited body's own 12 s deadline through its OWN _physics_process,
+	in explicit half-second deltas, until the is_baited edge — at most 30
+	ticks (15 s), the check's bound for every release below (bead
+	godot-test1-jom6).
+
+	WHY NOT ONE 12 s FRAME. A sniff pause carried in from the staging frames
+	(_wander's sniff_pause_chance, pause_duration <= 1.2 s — take_bait drops
+	the chase, the track, the bite and the flee but not the pause) eats a
+	_physics_process tick in the is_paused branch without spending _bait_left,
+	so one exact-12 s frame leaves a paused body baited and the three release
+	assertions blame the deadline for the pause's work. Measured at
+	--fixed-fps 2: the late joiner still baited with paused=true and 0.1 s of
+	pause left, bait_left untouched at 5.0. Stepping to the edge spends the
+	pause first and the deadline after; the bound still ends far short of a
+	20 s release (mutation) or no release at all.
+	"""
+	var spent := 0
+	while bool(body.get("is_baited")) and spent < 30:
+		body._physics_process(0.5)
+		spent += 1
 
 
 func _free_kimchi_probes(bodies: Array) -> void:
