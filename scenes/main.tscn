@@ -1,4 +1,4 @@
-[gd_scene load_steps=40 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=41 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -11,6 +11,7 @@
 [ext_resource type="Script" path="res://scripts/sound_manager.gd" id="14_sound"]
 [ext_resource type="Script" path="res://scripts/danger_vignette.gd" id="15_danger"]
 [ext_resource type="Script" path="res://scripts/capture_hint.gd" id="16_capture"]
+[ext_resource type="Script" path="res://scripts/bike_rack_hint.gd" id="39_rackhint"]
 [ext_resource type="Script" path="res://scripts/weather_manager.gd" id="17_weather"]
 [ext_resource type="Script" path="res://scripts/fauna_manager.gd" id="18_fauna"]
 [ext_resource type="Script" path="res://scripts/mp_manager.gd" id="19_mp"]
@@ -270,6 +271,24 @@ text = "Click to look around"
 horizontal_alignment = 1
 vertical_alignment = 1
 script = ExtResource("16_capture")
+
+[node name="BikeRackHint" type="Label" parent="HUD"]
+visible = false
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -200.0
+offset_top = -112.0
+offset_right = 200.0
+offset_bottom = -80.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+horizontal_alignment = 1
+vertical_alignment = 1
+script = ExtResource("39_rackhint")
 
 [node name="LandmarkToast" type="Control" parent="HUD"]
 anchors_preset = 7
