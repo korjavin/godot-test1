@@ -3,10 +3,11 @@ extends Label
 ## paints under itself.
 ##
 ## Each frame this mirrors the player's OWN coin count (the headline score) into
-## the label text, plus the crew's bank on a second labelled line while in a room
-## (bead godot-test1-y77d). It finds the player through the "player" group rather
-## than a hard reference, matching the rest of the project, so it keeps working
-## across player respawns.
+## the label text, plus the crew's bank on the SAME line while in a room
+## (bead godot-test1-y77d, round 2: a second line would move the whole HUD
+## stack). It finds the player through the "player" group rather than a hard
+## reference, matching the rest of the project, so it keeps working across player
+## respawns.
 ##
 ## THIS LABEL ALSO PAINTS (bead godot-test1-l8rs). Under the text, inside its own
 ## rect, `_draw()` puts a Diablo-ish hexagon badge carrying the level digits and a
@@ -43,22 +44,17 @@ const POP_RECOVER_SPEED: float = 10.0
 
 ## THE LEVEL STRIP'S BAND, in this Label's local coordinates.
 ##
-## `STRIP_TOP` is `heading_font().get_height(FONT_SIZE)` — measured 60 — so solo
-## the band starts exactly where the text's descent space ends and the strip can
-## never touch a glyph. The rect in `main.tscn` is 136 px tall, so solo the band
-## is 12 px (`STRIP_BAND`) sitting 64 px above the rect's bottom edge.
-##
-## IN A ROOM the label carries a second line (the `Crew:` bank, bead
-## godot-test1-y77d) and the text block is ~123 px, not 60 — a strip pinned at 60
-## would be drawn inside the crew line's own glyphs, and a block grown downward
-## would run into `AbilityHUD` (send-back round 1). So the strip top is DERIVED
-## from the live text height (`coin_strip_top()`), never the constant: 60 solo,
-## the text block's end in a room. The label never grows — both states fit the
-## designed 136 px rect — so the block always ends above the ability region.
+## `STRIP_TOP` is `heading_font().get_height(FONT_SIZE)` — measured 60 — so the
+## band starts exactly where the text's descent space ends and the strip can never
+## touch a glyph. The rect in `main.tscn` is 72 px tall, so the band is the bottom
+## 12 px of it. The crew figure rides on the SAME text line (round 2), so one
+## line is all there ever is and the constant holds in a room too.
 const STRIP_TOP: float = 60.0
-## The strip band's own height: the bar, its frame and the badge's waist. Fixed
-## in both states; what moves is where the band starts, never how tall it is.
-const STRIP_BAND: float = 12.0
+## The separator between the personal figure and the crew figure on the room
+## line: a literal in one const, so the panel, the toast and the width budget
+## cannot drift into three different punctuations.
+const CREW_SEP: String = " · "
+
 
 ## The badge is deliberately TALLER than the band and overhangs it by 6 px at each
 ## end. A badge that fitted the 12 px band would be a bar with a point on it, and
@@ -118,12 +114,6 @@ var progression: Node = null
 
 ## Last coin count we displayed — an increase means a pickup just happened.
 var _last_coins: int = 0
-
-## How many text lines the last drawn frame had (1 solo, 2 with the crew line).
-## The strip moves when this flips, so it joins the redraw trigger below — a
-## join or leave that changes no coin would otherwise leave the strip where the
-## old state put it.
-var _last_lines: int = 1
 
 ## THE STRIP'S ONLY REDRAW TRIGGER. `_process` recomputes both every frame and
 ## calls `queue_redraw()` ONLY when one of them moved — which is per coin, never
@@ -212,15 +202,16 @@ func _process(delta: float) -> void:
 		var mult: int = player.get_streak_multiplier()
 		if mult > 1:
 			line += " (x%d)" % mult
-		# THE CREW BANK, ONE LABELLED LINE UNDER THE PERSONAL ONE (bead
-		# godot-test1-y77d). Drawn only when the player's room_bank() reads
-		# non-null — solo there is no second line at all. Asked through the
-		# player so this keeps its group-lookup-only shape; the bank itself is
-		# summed in mp_manager.shared_bank().
+		# THE CREW FIGURE, ON THE SAME LINE (bead godot-test1-y77d, round 2).
+		# Drawn only when the player's room_bank() reads non-null — solo the
+		# line is personal alone. Asked through the player so this keeps its
+		# group-lookup-only shape; the bank itself is summed in
+		# mp_manager.shared_bank(). One line, so the strip never moves and the
+		# HUD stack underneath never shifts.
 		if player.has_method("room_bank"):
 			var bank: Variant = player.call("room_bank")
 			if bank != null:
-				line += "\n" + tr("Crew: %d") % int(bank)
+				line += CREW_SEP + tr("Crew: %d") % int(bank)
 		# ALL CAPS AT THE DRAW SITE and never in `ui.csv`, where the key IS the
 		# English source string — the spec's typography rule, and the reason the
 		# composition above happens into a local rather than into `.text`.
@@ -233,35 +224,16 @@ func _process(delta: float) -> void:
 	# asked for over a signal: `levelled_up` fires on a LEVEL change, and a coin gain
 	# has no signal at all. (Assigning an unchanged `text` does not redraw a Label
 	# either, so without this the strip would simply never repaint.)
-	# The line count rides on the text just composed: 2 with the crew line, 1
-	# solo. It joins the trigger so a join or leave moves the strip on its own
-	# frame instead of waiting for the next coin.
-	var lines: int = text.count("\n") + 1 if not text.is_empty() else _last_lines
 	var frac: float = -1.0
 	var level: int = -1
 	if progression and progression.has_method("level_progress") \
 			and "lifetime_coins" in progression and "level" in progression:
 		frac = progression.level_progress(progression.lifetime_coins)
 		level = progression.level
-	if frac != _last_fraction or level != _last_level or lines != _last_lines:
+	if frac != _last_fraction or level != _last_level:
 		_last_fraction = frac
 		_last_level = level
-		_last_lines = lines
 		queue_redraw()
-
-
-func coin_strip_top() -> float:
-	"""
-	Where the level strip's band starts, in this Label's local coordinates.
-
-	Solo it is `STRIP_TOP` itself; with the crew line up it is the live text
-	block's end (`get_minimum_size().y` — 123 px measured for two 40 px Oswald
-	lines), so the strip always starts BELOW the last glyph instead of inside
-	it. PUBLIC so `hero_hud_selfcheck` 9c can ask the shipped function rather
-	than re-deriving it — a copy is exactly what would pass while the painter
-	overlapped the crew line.
-	"""
-	return maxf(STRIP_TOP, get_minimum_size().y)
 
 
 func _draw() -> void:
@@ -280,7 +252,7 @@ func _draw() -> void:
 	"""
 	if _last_fraction < 0.0:
 		return   # no Progression node — paint nothing, exactly as the old prefix did
-	var cy := coin_strip_top() + STRIP_BAND * 0.5
+	var cy := STRIP_TOP + (size.y - STRIP_TOP) * 0.5
 	var font := HudTheme.heading_font()
 	var digits := str(_last_level)
 	var digits_w := font.get_string_size(
