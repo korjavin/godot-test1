@@ -11,8 +11,11 @@ extends Control
 ## a small button) is not a feature a first-time visitor discovers.
 ##
 ## So the game no longer starts on its own. It opens on one screen with ONE
-## button — PLAY (or Enter/Space) — and a line underneath saying where
-## multiplayer lives.
+## choice — PLAY (or Enter/Space) — and a line underneath saying where
+## multiplayer lives. When a saved run waits, PLAY steps aside for the one fork
+## that earns a place on the card — CONTINUE (the saved world, skipping the
+## intro film) and NEW GAME — because unlike solo-vs-MP it binds something:
+## which world you are in.
 ##
 ## **THE SOLO / MULTIPLAYER FORK IS GONE** (owner ruling 2026-09-03, bead
 ## `godot-test1-6pa`, verbatim: *"we shouldn't have solo/multiplayer select on
@@ -126,9 +129,9 @@ extends Control
 ## game title that wraps to two lines grows the card instead of overflowing it.
 const CARD_WIDTH: float = 420.0
 
-## The PLAY button is past the ~44-48 pt minimum touch target. It is the only
-## button on the card now that the fork is gone, so nothing here has to out-size
-## anything else to read as the default action.
+## The choice buttons are past the ~44-48 pt minimum touch target. They are the
+## only buttons on the card now that the fork is gone, so nothing here has to
+## out-size anything else to read as the default action.
 const BUTTON_HEIGHT: float = 64.0
 
 ## GODOT'S OWN BACKSTOP BEHIND THE BROWSER'S. How long the film may make no
@@ -252,6 +255,11 @@ var _film_stall: float = 0.0
 ## Whether this session is a phone, decided once in `_ready()` BEFORE the UI is
 ## built — `_build_ui()` draws a different card for it. See `_is_phone()`.
 var _phone: bool = false
+
+## The card's choice buttons (PLAY, or CONTINUE / NEW GAME) live in one box so
+## `reenter_for_new_run()` can rebuild them without touching the hint or the
+## language row. Null on the phone card, which builds no choices at all.
+var _choice_box: VBoxContainer = null
 
 # --- Child node references (built in _ready, not from a .tscn) --------------
 
@@ -472,12 +480,23 @@ func cancel_film() -> void:
 ## original direct restart path, while web gets an actual user-input boundary
 ## before the next opening film. This is a real reset of the one-way dismissal,
 ## not merely a visibility flip: processing, input and the pause are restored.
+## Web gate for the Play Again path, an instance method rather than an inline
+## `OS.has_feature("web")` so the self-check can drive the re-entry headlessly
+## — the same seam shape as `_is_phone()`.
+func _is_web_build() -> bool:
+	return OS.has_feature("web")
+
+
 func reenter_for_new_run() -> void:
-	if not OS.has_feature("web") or not _dismissed:
+	if not _is_web_build() or not _dismissed:
 		return
 	_intro_playing = false
 	_film_finished_callback = Callable()
 	_dismissed = false
+	# A restart empties the slot (restart_game -> new_game clears it), so the card
+	# re-asks: without this a Play Again keeps offering the world just ended,
+	# whose checkpoint no longer exists.
+	_refresh_start_choices()
 	visible = true
 	set_process(true)
 	set_process_unhandled_input(true)
@@ -641,7 +660,11 @@ func _build_ui() -> void:
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(subtitle)
 
-	vbox.add_child(_make_button("PLAY", _on_start_pressed))
+	_choice_box = VBoxContainer.new()
+	_choice_box.name = "StartChoices"
+	_choice_box.add_theme_constant_override("separation", HudTheme.CARD_PADDING)
+	vbox.add_child(_choice_box)
+	_refresh_start_choices()
 
 	# THE WHOLE OF MULTIPLAYER'S DISCOVERABILITY, and it is deliberately a
 	# sentence rather than a button (see the header). It names the control, the
@@ -808,11 +831,19 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed("ui_accept"):
 		get_viewport().set_input_as_handled()
-		_on_start_pressed()
+		# The DEFAULT choice: CONTINUE when a saved run waits, PLAY otherwise.
+		# Routed here rather than by focusing a button — `_make_button()` keeps
+		# FOCUS_NONE so a focused card button cannot re-fire on the player's
+		# first jump.
+		if _has_continue():
+			_on_continue_pressed()
+		else:
+			_on_start_pressed()
 
 
-## Play the intro film first (web only), then start the game. This is the card's
-## one and only action.
+## Play the intro film first (web only), then start the game. This is the
+## card's PLAY / NEW GAME action — CONTINUE dismisses straight to the restored
+## run and never comes here.
 ##
 ## Hooked HERE and deliberately not in `_dismiss()`, which is the obvious
 ## "simplification" and would be a LOOP: every other way out of this node ends in
@@ -839,6 +870,54 @@ func _on_start_pressed() -> void:
 			_body.visible = false
 		return
 	_dismiss()
+
+
+## Whether the card offers CONTINUE / NEW GAME instead of PLAY: the player group
+## answers `has_save()` true. Group lookup with `has_method`, never a path — the
+## card degrades to PLAY when run standalone (`style_shots.tscn`), where no
+## player exists. After an archived ending the slot is empty (.2 clears it at
+## archive time), so the answer is false there and the card shows PLAY.
+func _has_continue() -> bool:
+	var player := get_tree().get_first_node_in_group("player")
+	if player == null or not player.has_method("has_save"):
+		return false
+	return bool(player.call("has_save"))
+
+
+## (Re)build the card's choice buttons for the current slot state. Called once
+## from `_build_ui()` and again from `reenter_for_new_run()`.
+func _refresh_start_choices() -> void:
+	if _choice_box == null:
+		return
+	for child: Node in _choice_box.get_children():
+		_choice_box.remove_child(child)
+		child.queue_free()
+	if _has_continue():
+		_choice_box.add_child(_make_button("CONTINUE", _on_continue_pressed))
+		_choice_box.add_child(_make_button("NEW GAME", _on_new_game_pressed))
+	else:
+		_choice_box.add_child(_make_button("PLAY", _on_start_pressed))
+
+
+## CONTINUE skips the intro film (owner ruling 2026-09-20: you have seen it) —
+## `_dismiss()` hands back the pause and the mouse then the restored run loads,
+## never `_start_film`.
+func _on_continue_pressed() -> void:
+	if _dismissed or _intro_playing:
+		return
+	var player := get_tree().get_first_node_in_group("player")
+	if player == null or not player.has_method("continue_save"):
+		return
+	_dismiss()
+	player.call("continue_save")
+
+
+## NEW GAME clears the slot up front — a player who closes the tab mid-film
+## must not be offered the old world again — then takes today's PLAY path (the
+## film, then the run the terrain already rolled in `_ready()`).
+func _on_new_game_pressed() -> void:
+	BestRunStore.clear_save_slot()
+	_on_start_pressed()
 
 
 ## Stand down for good: hide, stop processing, release the pause, hand the mouse
