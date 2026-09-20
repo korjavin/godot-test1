@@ -39,9 +39,10 @@ class_name BestRunStore
 ##     *and* `user://` on the one device orphans the old record too (it stays on
 ##     the server, unreachable, until the cap evicts it). That is the bead's own
 ##     design — this game has no accounts and the owner scoped the acceptance to
-##     "devices sharing the player id". `ponytail:` the upgrade path is showing
-##     the id somewhere the player can copy it and accepting a pasted one, which
-##     is a UI feature, not a change here; a real login is the one after that.
+##     "devices sharing the player id". `ponytail:` the upgrade path was showing
+##     the id somewhere the player can copy it and accepting a pasted one —
+##     SHIPPED as `adopt_player_id()` below plus the MP panel's Sync section
+##     (bead godot-test1-i8yu.6); a real login is still the one after that.
 ##
 ## RECORDS ONLY EVER GO UP, on both layers and on the server. That is what makes
 ## the ordering irrelevant: `loaded` fires once with the local values (inside
@@ -385,6 +386,49 @@ func player_id() -> String:
 	if _player_id.is_empty():
 		_player_id = _load_or_make_player_id()
 	return _player_id
+
+
+static func is_valid_player_id(code: String) -> bool:
+	"""
+	Whether `code` is shaped like a player id: 32 hex characters.
+
+	The re-mint rule `_load_or_make_player_id()` already enforces, factored out
+	so the mint path and the claim path (`adopt_player_id()`) cannot drift
+	apart — the lobby refuses anything else, so a second spelling of "valid"
+	is a second outage.
+	"""
+	return code.length() == PLAYER_ID_HEX_LEN and code.is_valid_hex_number()
+
+
+func adopt_player_id(code: String) -> bool:
+	"""
+	Adopt a pasted claim code as this profile's player id (bead godot-test1-i8yu.6).
+
+	The code may carry the display separators (`mp_ui.gd` shows groups of four)
+	and any casing; both are normalized away, and anything that is not then a
+	valid id is refused WITHOUT changing anything — no layer written,
+	`_player_id` untouched, no request made.
+
+	On acceptance BOTH local layers are written — the `localStorage` key AND the
+	ConfigFile `[player]` id, on every platform (the migration idiom in
+	`_load_or_make_player_id()` reads both, so both must agree) — `_player_id`
+	is set, and `fetch()` runs once so the adopted id's records merge in through
+	the ordinary monotone path. The saved game follows the same rule once its
+	own boot load lands (epic godot-test1-i8yu).
+	"""
+	var cleaned: String = code.strip_edges().to_lower()
+	for separator: String in [" ", "\t", "\n", "\r", "-"]:
+		cleaned = cleaned.replace(separator, "")
+	if not is_valid_player_id(cleaned):
+		return false
+	_ls_set(LS_PLAYER_ID, cleaned)
+	var cfg := ConfigFile.new()
+	cfg.load(config_path)  # keep every other section intact
+	cfg.set_value(CONFIG_PLAYER_SECTION, "id", cleaned)
+	cfg.save(config_path)
+	_player_id = cleaned
+	fetch()
+	return true
 
 
 # =============================================================================
@@ -909,7 +953,8 @@ func _load_or_make_player_id() -> String:
 			stored = str(cfg.get_value(CONFIG_PLAYER_SECTION, "id", ""))
 	# Re-mint anything the lobby would refuse, so a corrupted store self-heals
 	# instead of 400ing every request for the rest of this install's life.
-	if stored.length() == PLAYER_ID_HEX_LEN and stored.is_valid_hex_number():
+	# The shape itself is `is_valid_player_id()`, shared with `adopt_player_id()`.
+	if is_valid_player_id(stored):
 		return stored
 
 	var rng := RandomNumberGenerator.new()

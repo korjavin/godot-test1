@@ -14,6 +14,8 @@ extends Control
 ##     one *specific* person's room, not the way in,
 ##   * show the room's code large with a **Copy** button so it can be pasted
 ##     into a chat, plus who is currently in the room,
+##   * show the records' **Sync / claim code** with its own **Copy**, and take a
+##     pasted one — the second device's way in (bead godot-test1-i8yu.6),
 ##   * **pick a hero** from the lobby's pool — one button per hero, the ones
 ##     other players hold disabled and named with their holder,
 ##   * **Leave**, returning to solo play.
@@ -165,6 +167,11 @@ const TOUCH_MIN_HEIGHT: float = 48.0
 ## typo is rejected before the lobby ever has to see it.
 const CODE_LENGTH: int = 6
 
+## The claim-code field's cap: 32 hex plus the 7 display separators, with room
+## for a sloppy paste. Anything longer is refused by `adopt_player_id()` whatever
+## the field allows — this only stops a wall of text, not an invalid code.
+const CLAIM_FIELD_MAX: int = 48
+
 ## The lobby's room cap (`server/room.go`'s `MaxMembers`). Mirrored rather than
 ## fetched, exactly like `TUNE_GEAR_HEIGHT` above: a stale value here costs a
 ## wrong "n/4" in a label, never a wrong join — the lobby refuses a fifth member
@@ -304,6 +311,13 @@ var _status_label: Label = null
 ## offline.
 var _code_label: Label = null
 var _code_row: HBoxContainer = null
+
+## The Sync / claim-code section (bead godot-test1-i8yu.6): the player id in
+## groups of four with its own Copy, plus a paste field and "Use this code".
+## Hidden when the scene has no player store to read or adopt into.
+var _claim_section: VBoxContainer = null
+var _claim_id_label: Label = null
+var _claim_input: LineEdit = null
 
 ## Where a friend's invite code is typed, plus the Join button beside it.
 var _code_input: LineEdit = null
@@ -724,24 +738,9 @@ func _build_ui() -> void:
 	_code_input.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
 	_code_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# `HudTheme.theme()` styles Panel / Button / Label / CheckBox and stops there —
-	# a `LineEdit` left alone keeps the engine's rounded grey field on an INK card.
-	# Three overrides off the palette rather than a fifth `theme()` slot: this is
-	# the ONE text field in the HUD, and `hud_theme.gd` is not this bead's file.
-	# **A theme gap, named in the PR**: a second panel with a field should promote
-	# these into `HudTheme` rather than copy them.
-	_code_input.add_theme_stylebox_override("normal", HudTheme.strip())
-	_code_input.add_theme_stylebox_override("focus", HudTheme.button("focus"))
-	_code_input.add_theme_color_override("font_color", HudTheme.BONE)
-	_code_input.add_theme_color_override("font_placeholder_color", HudTheme.STEEL)
-	_code_input.add_theme_color_override("caret_color", HudTheme.VISOR_AMBER)
-	# AND THE READ-ONLY STATE, which is the one this panel spends most of its life
-	# in: `_refresh()` sets `editable = false` the moment you are in a room, and a
-	# `LineEdit` then draws its `read_only` box and `font_uneditable_color` instead
-	# of the two overridden above — so the engine's rounded grey field came back on
-	# the online panel (codex review 2026-09-05). Disabled is UNIT_KHAKI on the ink
-	# ground, exactly as `HudTheme.button("disabled")` spells it for a Button.
-	_code_input.add_theme_stylebox_override("read_only", HudTheme.button("disabled"))
-	_code_input.add_theme_color_override("font_uneditable_color", HudTheme.UNIT_KHAKI)
+	# the field skin itself (read-only state included) is `_style_line_edit()`,
+	# shared with the claim-code field below.
+	_style_line_edit(_code_input)
 	# Upper-case as it is typed: the lobby upper-cases anyway, but showing the
 	# player the code in the form they were given avoids a "did I mistype it?"
 	# moment. Re-setting `text` moves the caret, so restore it.
@@ -882,6 +881,73 @@ func _build_ui() -> void:
 	_mic_state_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_voice_section.add_child(_mic_state_label)
 
+	# --- Sync / claim code --------------------------------------------------
+	# The upgrade path `best_run_store.gd`'s banner names (bead godot-test1-i8yu.6):
+	# the records' player id, shown for copying, plus a paste field that adopts
+	# one from the player's other device. Always visible rather than room-gated —
+	# syncing a second device is a solo player's errand, not a room's — and hidden
+	# only when the scene has no player store at all (standalone scenes degrade).
+	_claim_section = VBoxContainer.new()
+	_claim_section.name = "ClaimCode"
+	_claim_section.add_theme_constant_override("separation", 6)
+	_claim_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_child(_claim_section)
+
+	_add_heading(_claim_section, "Sync / claim code")
+
+	var your_code := Label.new()
+	your_code.name = "ClaimCaption"
+	your_code.text = "Your code"
+	your_code.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	your_code.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	your_code.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_claim_section.add_child(your_code)
+
+	var claim_row := HBoxContainer.new()
+	claim_row.add_theme_constant_override("separation", 8)
+	claim_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_claim_section.add_child(claim_row)
+
+	_claim_id_label = Label.new()
+	_claim_id_label.name = "ClaimId"
+	_claim_id_label.text = ""
+	# Monospace where the platform has one: a `SystemFont` asking for "monospace"
+	# resolves on desktop and falls back to the panel face on web (no system faces
+	# there) — the groups of four below carry the legibility on that platform.
+	var claim_mono := SystemFont.new()
+	claim_mono.font_names = PackedStringArray(["monospace"])
+	_claim_id_label.add_theme_font_override("font", claim_mono)
+	_claim_id_label.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	_claim_id_label.add_theme_color_override("font_color", HudTheme.BONE)
+	_claim_id_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_claim_id_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	claim_row.add_child(_claim_id_label)
+
+	var claim_copy := _make_button("Copy", _on_claim_copy_pressed)
+	claim_copy.size_flags_horizontal = Control.SIZE_SHRINK_END
+	claim_row.add_child(claim_copy)
+
+	var claim_use_row := HBoxContainer.new()
+	claim_use_row.add_theme_constant_override("separation", 8)
+	claim_use_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_claim_section.add_child(claim_use_row)
+
+	_claim_input = LineEdit.new()
+	_claim_input.name = "ClaimInput"
+	_claim_input.max_length = CLAIM_FIELD_MAX
+	_claim_input.custom_minimum_size = Vector2(0.0, TOUCH_MIN_HEIGHT)
+	_claim_input.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	_claim_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_line_edit(_claim_input)
+	# Enter in the field is the same as pressing the button beside it — the Join
+	# row's convention, for the Join row's reason (a phone's "go" key).
+	_claim_input.text_submitted.connect(func(_t: String) -> void: _on_claim_use_pressed())
+	claim_use_row.add_child(_claim_input)
+
+	var claim_use := _make_button("Use this code", _on_claim_use_pressed)
+	claim_use.size_flags_horizontal = Control.SIZE_SHRINK_END
+	claim_use_row.add_child(claim_use)
+
 	# --- Leave + Close ----------------------------------------------------
 	_leave_button = _make_button("Leave room", _on_leave_pressed)
 
@@ -968,6 +1034,29 @@ func _make_button(label: String, handler: Callable) -> Button:
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.pressed.connect(handler)
 	return button
+
+
+## The LineEdit skin `HudTheme.theme()` has no slot for — without it a field keeps
+## the engine's rounded grey look on an INK card. Three overrides off the palette
+## rather than a fifth `theme()` slot, shared by the invite-code field and the
+## claim-code field: this panel growing a second field is exactly the case the old
+## comment said should promote these into `HudTheme`, and promoting them is still
+## `hud_theme.gd`'s bead, not this one's — one helper so the two fields cannot
+## drift is this one's.
+static func _style_line_edit(field: LineEdit) -> void:
+	field.add_theme_stylebox_override("normal", HudTheme.strip())
+	field.add_theme_stylebox_override("focus", HudTheme.button("focus"))
+	field.add_theme_color_override("font_color", HudTheme.BONE)
+	field.add_theme_color_override("font_placeholder_color", HudTheme.STEEL)
+	field.add_theme_color_override("caret_color", HudTheme.VISOR_AMBER)
+	# AND THE READ-ONLY STATE, which is the one this panel spends most of its life
+	# in: `_refresh()` sets `editable = false` the moment you are in a room, and a
+	# `LineEdit` then draws its `read_only` box and `font_uneditable_color` instead
+	# of the two overridden above — so the engine's rounded grey field came back on
+	# the online panel (codex review 2026-09-05). Disabled is UNIT_KHAKI on the ink
+	# ground, exactly as `HudTheme.button("disabled")` spells it for a Button.
+	field.add_theme_stylebox_override("read_only", HudTheme.button("disabled"))
+	field.add_theme_color_override("font_uneditable_color", HudTheme.UNIT_KHAKI)
 
 
 # ============================================================================
@@ -1061,7 +1150,7 @@ func _on_copy_pressed() -> void:
 	var code: String = _current_code()
 	if code.is_empty():
 		return
-	DisplayServer.clipboard_set(code)
+	_copy_to_clipboard(code)
 	_on_status(tr("Copied %s to the clipboard") % code)
 
 
@@ -1074,6 +1163,97 @@ func _on_code_text_changed(new_text: String) -> void:
 	var caret: int = _code_input.caret_column
 	_code_input.text = upper
 	_code_input.caret_column = caret
+
+
+## Copy `text` to the OS clipboard. On web `DisplayServer.clipboard_set` never
+## reaches the browser's clipboard, so the write goes through `navigator.clipboard`
+## directly — answering 1/0, never a bare boolean (the `intro_selfcheck` rule:
+## the web template marshals a JS boolean into a corrupted Variant).
+static func _copy_to_clipboard(text: String) -> void:
+	if OS.has_feature("web"):
+		var js := "(function(){try{navigator.clipboard.writeText(%s);return 1;}catch(e){return 0;}})()"
+		JavaScriptBridge.eval(js % JSON.stringify(text), true)
+	else:
+		DisplayServer.clipboard_set(text)
+
+
+## The records store behind the claim-code section: the LOCAL player's own
+## (`player_controller.best_run_store`), reached through the node that owns it —
+## never built here, so there is exactly one `_player_id` cache to adopt into.
+## Null in a scene with no player, where the section hides itself.
+func _claim_store() -> Node:
+	var tree := get_tree()
+	if tree == null:
+		return null
+	var player := tree.get_first_node_in_group("player")
+	if player == null:
+		return null
+	var store: Variant = player.get("best_run_store")
+	if not (store is Node):
+		return null
+	var node := store as Node
+	if not node.has_method("player_id") or not node.has_method("adopt_player_id"):
+		return null
+	return node
+
+
+## The claim code in groups of four for legibility; `adopt_player_id()` accepts
+## the id with or without the separators, so Copy hands it the raw form.
+static func _group_claim_code(id: String) -> String:
+	var grouped := ""
+	for i in id.length():
+		if i > 0 and i % 4 == 0:
+			grouped += " "
+		grouped += id.substr(i, 1)
+	return grouped
+
+
+## Repaint the claim-code section: hidden without a player store, otherwise the
+## grouped id plus the one-line leak warning — anyone holding the code reads and
+## overwrites the save, and only a new code undoes that. Re-run on every
+## `_refresh()`, which is also where a live locale switch lands, so the tooltip
+## re-resolves instead of freezing in the build language.
+func _refresh_claim() -> void:
+	var store := _claim_store()
+	if _claim_section != null:
+		_claim_section.visible = store != null
+	if store == null or _claim_id_label == null:
+		return
+	var id: String = String(store.call("player_id"))
+	_claim_id_label.text = _group_claim_code(id)
+	_claim_id_label.tooltip_text = tr("Anyone with this code can read and overwrite your save and raise your records — only a new code undoes that.")
+
+
+func _on_claim_copy_pressed() -> void:
+	var store := _claim_store()
+	if store == null or not store.has_method("player_id"):
+		return
+	var id: String = String(store.call("player_id"))
+	if id.is_empty():
+		return
+	_copy_to_clipboard(id)
+	_on_status(tr("Copied %s to the clipboard") % _group_claim_code(id))
+
+
+func _on_claim_use_pressed() -> void:
+	# Done typing — drop the caret so a phone's on-screen keyboard folds away,
+	# the Join handler's convention for the Join handler's reason.
+	if _claim_input != null:
+		_claim_input.release_focus()
+	var store := _claim_store()
+	if store == null or not store.has_method("adopt_player_id"):
+		# Unreachable while the section hides itself without a store (see
+		# `_refresh_claim`), guarded for the standalone scene all the same.
+		_on_status("Multiplayer is not available in this scene")
+		return
+	var pasted: String = "" if _claim_input == null else _claim_input.text
+	if bool(store.call("adopt_player_id", pasted)):
+		if _claim_input != null:
+			_claim_input.text = ""
+		_refresh_claim()
+		_on_status(tr("Claim code adopted"))
+	else:
+		_on_status(tr("That claim code is not valid"))
 
 
 # ============================================================================
@@ -1431,14 +1611,16 @@ func _set_panel_open(open: bool) -> void:
 		if not _is_online():
 			_refresh_rooms()
 	else:
-		# The code field is the ONE control in this panel that legitimately takes
-		# keyboard focus — you have to type into it — so it cannot be FOCUS_NONE
+		# The code fields are the only controls in this panel that legitimately take
+		# keyboard focus — you have to type into them — so they cannot be FOCUS_NONE
 		# like the buttons. Hand the focus back on the way out: hiding a Control
 		# already drops it, but this also dismisses a phone's on-screen keyboard,
 		# and it means no future refactor that closes the panel WITHOUT hiding it
 		# can leave a text field quietly eating W/A/S/D.
 		if _code_input != null:
 			_code_input.release_focus()
+		if _claim_input != null:
+			_claim_input.release_focus()
 		if _recapture_mouse:
 			# Closing is a user gesture, which is exactly what browser pointer-lock
 			# needs, so this works on desktop web too.
@@ -1555,6 +1737,7 @@ func _refresh() -> void:
 	if _members_label != null:
 		_members_label.text = heading
 
+	_refresh_claim()
 	_update_voice_ui()
 
 

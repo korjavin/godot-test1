@@ -1334,6 +1334,112 @@ func _check_ranks_survive_a_relaunch() -> void:
 	Sentinel.done("ranks_survive_a_relaunch")
 
 
+## Counts `fetch()` calls so the claim-code check can prove the adoption merge
+## path is reached exactly once — without the network the real `fetch()` performs.
+class ClaimFetchSpy extends BestRunStore:
+	var fetch_calls: int = 0
+	func fetch() -> void:
+		fetch_calls += 1
+
+
+func _expect_cfg_player_id(wanted: String, when: String) -> void:
+	# Read the cfg FILE's `[player]` id back directly — through the store would
+	# only prove the store agrees with itself, and `player_id()` on a fresh store
+	# re-reads these same layers. This is the half that fails when only one of
+	# the two local layers was written (M2).
+	var cfg := ConfigFile.new()
+	if cfg.load(BestRunStore.config_path) != OK:
+		_fail("%s: the throwaway cfg would not load, so the [player] id proves nothing" % when)
+		return
+	var got := String(cfg.get_value(BestRunStore.CONFIG_PLAYER_SECTION, "id", ""))
+	if got != wanted:
+		_fail("%s: the cfg [player] id is %s, wanted %s" % [when, got, wanted])
+
+
+func _check_claim_code_adopts_a_pasted_id() -> void:
+	"""
+	A pasted claim code becomes the profile's player id; garbage does not.
+
+	`adopt_player_id()` (bead godot-test1-i8yu.6) is the only writer of somebody
+	else's id into this profile: a valid 32-hex code — with or without the
+	display separators, in any casing — rewrites BOTH local layers and re-fetches
+	so the adopted id's records merge in, while a short, non-hex or empty code
+	is refused with the old id untouched.
+
+	WHY HERE AND NOT IN `save_selfcheck`: the claim code moves the records' KEY,
+	not the save blob — and this file already owns the store's hermetic cfg
+	borrowing plus the player-id-adjacent monotone assertions. Driven against
+	`BestRunStore.config_path` (the throwaway this run arranged — see the
+	header), never the machine's profile.
+
+	NON-VACUOUS by named mutation, each of which turns this RED: M1 (the
+	validator skipped) adopts the 31-char probe; M2 (only one layer written)
+	trips the cfg-file assertion; M3 (adopt never sets `_player_id`) trips the
+	in-memory assertion — which reads the field itself, because on a fresh store
+	`player_id()` would lazily re-read the written layers and mask exactly that
+	bug. The fetch spy counts instead of fetching, so "exactly once" is 0-red
+	and 2-red alike.
+	"""
+	var store := BestRunStore.new()
+	# In the tree, like the player boot: a treeless store's adoption `fetch()`
+	# answers ERR_UNCONFIGURED on its lobby GET, which is a handled path but
+	# still prints an engine ERROR line a passing check has no business logging.
+	root.add_child(store)
+	var minted: String = store.player_id()
+	if minted.length() != BestRunStore.PLAYER_ID_HEX_LEN or not minted.is_valid_hex_number():
+		_fail("a fresh store minted %s instead of a 32-hex id — this check cannot arrange its own old id" % minted)
+		store.free()
+		Sentinel.done("claim_code_adopts_a_pasted_id")
+		return
+
+	var code := "0123456789abcdef0123456789abcdef"
+	if not store.adopt_player_id(code):
+		_fail("adopt_player_id() refused a valid 32-hex code")
+	if store.player_id() != code:
+		_fail("after adoption player_id() is %s, wanted the adopted code" % store.player_id())
+	if store._player_id != code:
+		_fail("adoption wrote the layers but never set _player_id — the next POST still carries the old id")
+	_expect_cfg_player_id(code, "adoption")
+
+	# NEGATIVE PROBES. Each must return false AND leave the old id in place —
+	# in memory and in the file.
+	if store.adopt_player_id(code.left(31)):
+		_fail("adopt_player_id() adopted a 31-char code — the length half of the validator is skipped (M1)")
+	if store.adopt_player_id("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"):
+		_fail("adopt_player_id() adopted a non-hex code — the hex half of the validator is skipped")
+	if store.adopt_player_id(""):
+		_fail("adopt_player_id() adopted an empty code")
+	if store.player_id() != code:
+		_fail("a refused adoption moved the id to %s" % store.player_id())
+	_expect_cfg_player_id(code, "a refused adoption")
+
+	# The display form adopts too: separators stripped, casing normalized. On a
+	# SECOND store, because each successful adoption fetches and two back-to-back
+	# fetches share one HTTPRequest node — the second answers ERR_BUSY (a handled
+	# path, but one that still prints an engine ERROR line).
+	var second := BestRunStore.new()
+	root.add_child(second)
+	var other := "aaaabbbbccccddddeeeeffff00001111"
+	if not second.adopt_player_id("AAAA BBBB-CCCC DDDD-EEEE FFFF-0000 1111"):
+		_fail("adopt_player_id() refused the spaced-and-dashed form of a valid code")
+	if second.player_id() != other:
+		_fail("the spaced form adopted as %s, wanted the normalized %s" % [second.player_id(), other])
+	_expect_cfg_player_id(other, "the spaced adoption")
+	root.remove_child(second)
+	second.free()
+	root.remove_child(store)
+	store.free()
+
+	# THE FETCH SPY. Adoption must reach the merge path exactly once.
+	var spy := ClaimFetchSpy.new()
+	if not spy.adopt_player_id("ffffffff00000000ffffffff00000000"):
+		_fail("the spy's valid adoption returned false — the count below proves nothing")
+	if spy.fetch_calls != 1:
+		_fail("adoption called fetch() %d times, wanted exactly once" % spy.fetch_calls)
+	spy.free()
+	Sentinel.done("claim_code_adopts_a_pasted_id")
+
+
 func _check_phase_echo_refunds_a_wall_pass() -> void:
 	"""
 	Primm's Phase Echo pays out for going THROUGH something, and the wall is
@@ -2340,6 +2446,7 @@ func _run() -> void:
 	_check_caps()
 	_check_ranks_merge_is_monotone()
 	_check_ranks_survive_a_relaunch()
+	_check_claim_code_adopts_a_pasted_id()
 	_check_every_selfcheck_is_hermetic()
 	await _check_streak_does_not_inflate_lifetime()
 	await _check_skill_effects_on_player()
