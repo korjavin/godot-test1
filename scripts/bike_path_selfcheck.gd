@@ -925,7 +925,9 @@ func _drawable_segments(terrain: Node3D, stations: Array[Dictionary],
 	water (`is_river_at` at both stations, `segment_blocked` between — a trunk
 	segment over a river is carried on `godot-test1-pnvb.3`'s DECK and is never
 	painted at ground level, so it is not a drawn segment either way) and the
-	destination keep-outs (`BikePaths.trunk_keep_out`, T5's ruling).
+	destination keep-outs (`BikePaths.trunk_keep_out`, T5's ruling) and the
+	pass gap (bead godot-test1-pnvb.9: a midpoint reading MOUNTAIN is not
+	painted, the route continues through it).
 	"""
 	var out: Dictionary = {}
 	for i in range(stations.size() - 1):
@@ -938,6 +940,8 @@ func _drawable_segments(terrain: Node3D, stations: Array[Dictionary],
 		if BikePaths.trunk_keep_out(terrain, a, waypoints) \
 				or BikePaths.trunk_keep_out(terrain, b, waypoints) \
 				or BikePaths.trunk_keep_out(terrain, (a + b) * 0.5, waypoints):
+			continue
+		if terrain.biome_at(((a + b) * 0.5).x, ((a + b) * 0.5).y) == terrain.Biome.MOUNTAIN:
 			continue
 		out[i] = true
 	return out
@@ -3216,12 +3220,17 @@ func _check_trunk_world_tie(terrain_script: GDScript) -> void:
 			var mid: Vector2 = (a + b) * 0.5
 			# ...and the segments inside a DESTINATION'S KEEP-OUT DISC, which are not
 			# drawn either (T5's ruling). A trunk's first segments are the ones most
-			# likely to be in one — the HQ anchor IS the tower's centre — so without
+			# likely to be in one — the HQ anchor stands inside the tower's disc — so without
 			# this T1 would sample exactly the stretch the family deliberately leaves
 			# bare and report every route as missing its paint.
 			if BikePaths.trunk_keep_out(terrain, a, waypoints) \
 					or BikePaths.trunk_keep_out(terrain, b, waypoints) \
 					or BikePaths.trunk_keep_out(terrain, mid, waypoints):
+				continue
+			# ...and the PASS GAP (bead godot-test1-pnvb.9): a midpoint reading
+			# MOUNTAIN is not painted either, and a lane through a pass is where
+			# T1 would otherwise go looking for it.
+			if terrain.biome_at(mid.x, mid.y) == terrain.Biome.MOUNTAIN:
 				continue
 			var chunk_pos: Vector2i = terrain.world_to_chunk(Vector3(mid.x, 0.0, mid.y))
 			var built: Dictionary = _spawn_bare(terrain, chunk_pos)

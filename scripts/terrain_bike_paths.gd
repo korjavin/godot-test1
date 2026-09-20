@@ -468,6 +468,35 @@ const TRUNK_DETOUR_MAX: int = 24
 ## six stations whole; that gate went with it in `godot-test1-pnvb.10`.)
 const TRUNK_MIN_STATIONS: int = 2
 
+## THE ROAD LANE (bead godot-test1-pnvb.9). When BOTH anchors of a pair sit on
+## the coin road's own stations, the trunk is NOT a walk: it is the road's line,
+## offset. Stations = [anchor_a] + [road_station(k).center + left(heading) *
+## TRUNK_LANE_OFFSET for k in ka..kb] + [anchor_b].
+##
+## TRUNK_LANE_OFFSET = 18.0, measured: at 18 m, 0-3 stations of ~370 read inside
+## the 14 m swath at tight bends, 0 keep-out rings and 0 tower hits. The first
+## and last stations ARE the anchors, so `_strict_link`'s exact snap holds and
+## two lanes sharing a circle meet to the bit; the connector into the circle is
+## gapped at draw time by the swath and ring keep-outs and reads as the stand
+## approach. Every station carries its road station's heading (the dash/pole yaw
+## needs it); there is no `_bike_turn` — the lane inherits the road's own
+## curvature (CoinRoad's recurrence), which is what a highway-side bike road
+## looks like. The pitch is CoinRoad._road_spacing(), read off the terrain and
+## never retyped here. Rivers go to bike_trunk_bridges() like every route (.3,
+## unchanged).
+##
+## ONE FIXED SIDE world-wide (owner ruling 2026-09-20): TRUNK_LANE_SIDE on the
+## file's own left normal, the same one the poles stand on — a pure function
+## with no per-seed side choice. `bike_path_selfcheck` B1 pins the sign.
+const TRUNK_LANE_OFFSET: float = 18.0
+const TRUNK_LANE_SIDE: float = 1.0
+## How near an anchor must stand to its road station to count as ON the road.
+## A road circle IS its station's centre verbatim (`terrain_waypoints.gd`), so
+## the distance is exactly 0; the door circle stands hundreds of metres off and
+## the gate ~150 m past the terminal. Anything in (0, 50) answers identically
+## on every CI seed; 1.0 m is the honest spelling of "~0".
+const TRUNK_LANE_ANCHOR_SNAP: float = 1.0
+
 ## THE FORM-3 INDEX OFFSET FOR TRUNK FURNITURE, AND IT IS PART OF THE WORLD.
 ## `terrain._scarcity_keep(chunk_pos, index, k)` hashes the index, so every family
 ## sharing a chunk needs its own band or two families' poles are thinned together
@@ -1051,6 +1080,66 @@ static func trunk_pair_walk(terrain: Node3D, anchors: Array[Dictionary], a: int,
 	return _trunk_route(terrain, anchors, {"a": a, "b": b}, reason)
 
 
+static func _trunk_lane(terrain: Node3D, anchors: Array[Dictionary], ai: int, bi: int) -> Array[Dictionary]:
+	"""
+	THE ROAD'S OWN LINE, OFFSET (bead godot-test1-pnvb.9) — or [] when this pair
+	is not a road pair, and `_trunk_route` walks instead.
+
+	@param ai / @param bi: The edge's two anchor indices into `anchors`.
+	@return: `[anchor_a] + [road_station(k).center + left * offset for k in
+	           ka..kb] + [anchor_b]`, every station carrying its road station's
+	           heading — or [] when either anchor is not a field circle sitting
+	           on its road station.
+
+	A ROAD PAIR IS TWO KIND_WAYPOINT ROWS (the `1` below is
+	`BikeNetwork.KIND_WAYPOINT` by value: this family reaches that one through
+	the terrain, never by name — CLAUDE.md Conventions) that `road_station_near`
+	sits on a station at distance ~0. Every field circle but the door circle
+	does (`terrain_waypoints.gd` returns the station centre verbatim); the door
+	circle and the gate stand far off, so the geometric test alone would do —
+	the kind test is the belt to its braces.
+
+	COSTS NO DRAW: arithmetic over the road cache. The span is clamped at
+	`ROAD_TERMINAL_X` (the cache stays honest past it, but no lane ever needs
+	it — every road circle stands west of the terminal).
+	"""
+	if int(anchors[ai]["kind"]) != 1 or int(anchors[bi]["kind"]) != 1:
+		return []
+	var pa: Vector2 = anchors[ai]["pos"]
+	var pb: Vector2 = anchors[bi]["pos"]
+	var na: Dictionary = road_station_near(terrain, pa)
+	var nb: Dictionary = road_station_near(terrain, pb)
+	if na.is_empty() or nb.is_empty():
+		return []
+	var ca: Vector2 = (na["station"] as Dictionary)["center"]
+	var cb: Vector2 = (nb["station"] as Dictionary)["center"]
+	if pa.distance_to(ca) > TRUNK_LANE_ANCHOR_SNAP or pb.distance_to(cb) > TRUNK_LANE_ANCHOR_SNAP:
+		return []
+	# The span, warmed contiguously like every other road consumer warms it.
+	var pad: float = BIKE_ROAD_CLEARANCE + terrain._road_spacing() * 2.0
+	terrain._road_extend_to_x(minf(pa.x, pb.x) - pad,
+			minf(maxf(pa.x, pb.x) + pad, terrain.ROAD_TERMINAL_X))
+	var stations: Array[Dictionary] = [{
+			"pos": pa, "heading": float((na["station"] as Dictionary)["heading"]) }]
+	var ka: int = int(na["k"])
+	var kb: int = int(nb["k"])
+	var step: int = 1 if ka <= kb else -1
+	var k: int = ka
+	while true:
+		var st: Dictionary = terrain._road_station(k)
+		var c: Vector2 = st["center"]
+		var h: float = float(st["heading"])
+		stations.append({
+				"pos": c + Vector2(-sin(h), cos(h)) * (TRUNK_LANE_SIDE * TRUNK_LANE_OFFSET),
+				"heading": h })
+		if k == kb:
+			break
+		k += step
+	stations.append({
+			"pos": pb, "heading": float((nb["station"] as Dictionary)["heading"]) })
+	return stations
+
+
 static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dictionary,
 		reason: Array[String] = []) -> Array[Dictionary]:
 	"""
@@ -1087,6 +1176,10 @@ static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dict
 	"""
 	if not reason.is_empty():
 		reason[0] = ""
+	# THE LANE FIRST: a road pair never walks.
+	var lane: Array[Dictionary] = _trunk_lane(terrain, anchors, int(edge["a"]), int(edge["b"]))
+	if not lane.is_empty():
+		return lane
 	var from: Vector2 = anchors[int(edge["a"])]["pos"]
 	var to: Vector2 = anchors[int(edge["b"])]["pos"]
 	# WALKED FROM THE END OUTSIDE THE CITY. The rect stops a trunk, so an edge whose
@@ -1130,7 +1223,12 @@ static func _trunk_route(terrain: Node3D, anchors: Array[Dictionary], edge: Dict
 		var step: Vector2 = pos + Vector2(cos(want), sin(want)) * BIKE_STATION_SPACING
 
 		# --- THE MASSIF. Steer around it, or be abandoned whole; never truncated.
-		if terrain.biome_at(step.x, step.y) == terrain.Biome.MOUNTAIN:
+		# ...EXCEPT THE CANYON (bead godot-test1-pnvb.9): MOUNTAIN ground within
+		# the road's clearance is the pass, not a wall — the walk goes through
+		# and the paint stays off it (the swath member gaps the road bed, the
+		# pass gap below gaps the rest).
+		if terrain.biome_at(step.x, step.y) == terrain.Biome.MOUNTAIN \
+				and not _in_canyon(terrain, step):
 			var skirt: float = _trunk_skirt(terrain, pos, want)
 			detour += 1
 			if is_nan(skirt) or detour > TRUNK_DETOUR_MAX:
@@ -1261,6 +1359,20 @@ static func _road_swath(terrain: Node3D, p: Vector2) -> bool:
 	"road" or "site" — which is a report and not a rule.
 	"""
 	return terrain._road_lateral_distance(p.x, p.y, BIKE_ROAD_CLEARANCE) < BIKE_ROAD_CLEARANCE
+
+static func _in_canyon(terrain: Node3D, p: Vector2) -> bool:
+	"""
+	Is this world XZ inside the coin road's canyon — MOUNTAIN-road-clearance of
+	the centreline (bead godot-test1-pnvb.9)? The massif builder keeps massif
+	CENTRES clear of the road, but `biome_at()` is noise and still says MOUNTAIN
+	inside the pass, where no box stands — so the canyon is passable ground to
+	the walk and a paint gap to the draw tier (the pass gap below). Same
+	`_road_lateral_distance` idiom as `_road_swath`, with the massif's own
+	clearance instead of the swath's.
+	"""
+	var c: float = terrain.MOUNTAIN_ROAD_CLEARANCE
+	return terrain._road_lateral_distance(p.x, p.y, c) < c
+
 
 static func road_station_near(terrain: Node3D, p: Vector2) -> Dictionary:
 	"""
@@ -1458,7 +1570,7 @@ static func _trunk_skirt(terrain: Node3D, pos: Vector2, heading: float) -> float
 		for sign_v: float in [1.0, -1.0]:
 			var h: float = heading + sign_v * deg_to_rad(TRUNK_SKIRT_DEG) * float(n)
 			var q: Vector2 = pos + Vector2(cos(h), sin(h)) * BIKE_STATION_SPACING
-			if terrain.biome_at(q.x, q.y) != terrain.Biome.MOUNTAIN:
+			if terrain.biome_at(q.x, q.y) != terrain.Biome.MOUNTAIN or _in_canyon(terrain, q):
 				return h
 	return NAN
 
@@ -1767,6 +1879,15 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 				or trunk_keep_out(terrain, (a + b) * 0.5, waypoints)):
 			continue
 
+		# --- THE PASS GAP (bead godot-test1-pnvb.9). A trunk through the canyon
+		# runs over ground that reads MOUNTAIN with no box on it, so a strip
+		# there would be paint on a massif face the route only borrows. A
+		# draw-time skip beside the river/keep-out skips: the station list is
+		# untouched and no RNG is involved — the route continues through the
+		# pass and the strip resumes past it.
+		if terrain.biome_at(mid.x, mid.y) == terrain.Biome.MOUNTAIN:
+			continue
+
 		# RECORDED AFTER BOTH SKIPS: this list is what the chunk DREW, not what the
 		# midpoint rule assigned it. A chunk whose whole share is water or keep-out
 		# draws nothing and must therefore leave no MARKER either — an empty Node3D
@@ -1776,12 +1897,18 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 		# same question the line above asks, rather than by a meta that could go stale.
 		segments.append(i)
 
-		# A yaw turns the box's local +X toward -Z, while the walk measures its
-		# heading as (cos h, sin h) in (x, z) — so the yaw that points a box along
-		# the segment is the NEGATED heading. The studs in `terrain_waypoints.gd`
-		# are the same arithmetic.
+		# A yaw turns the box's local +X toward -Z, while a direction in (x, z)
+		# is (cos h, sin h) — so the yaw that points a box along the segment is
+		# the NEGATED segment angle (the studs in `terrain_waypoints.gd` are the
+		# same arithmetic). Deliberately NOT the station heading: a walk steps
+		# along its heading so the two agree, but a lane carries its ROAD
+		# station's heading and on a bend the chord between two offset stations
+		# runs off it — yawing paint by the heading would lay the strip across
+		# its own segment (bead godot-test1-pnvb.9, caught by T1). The dash rides
+		# the same yaw — it is the strip's centre line. The poles' side and the
+		# sign facing still read the station heading.
 		var head: float = stations[i + 1]["heading"]
-		var yaw: float = -head
+		var yaw: float = -(b - a).angle()
 		var local_mid: Vector2 = mid - centre
 
 		# --- THE STRIP: one flat box per segment, no collision and NO FOOTPRINT.
@@ -1883,10 +2010,17 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 			# cursor as it is now. `bike_path_selfcheck` check 9 asks the SHIPPED
 			# `_build_block_multimesh` where this lens really lands and compares.
 			signals.append(cube_cursor + 1)
-			cube_cursor = _build_signal_head(terrain, at, head, yaw, rng,
+			# The segment's own angle, not the station heading: the builders
+			# face their plates along it, and a lane carries its road
+			# station's heading, which runs off the chord on a bend (bead
+			# godot-test1-pnvb.9 — check 7 caught the plates standing proud).
+			# For a walk the two agree, so nothing there moves.
+			var facing: float = (b - a).angle()
+			cube_cursor = _build_signal_head(terrain, at, facing, yaw, rng,
 					block_batch, block_body, cube_cursor)
 		else:
-			cube_cursor = _build_sign(terrain, top, at, head, yaw, rng,
+			var facing: float = (b - a).angle()
+			cube_cursor = _build_sign(terrain, top, at, facing, yaw, rng,
 					block_batch, block_body, cube_cursor)
 
 	return {
