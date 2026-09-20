@@ -144,10 +144,14 @@ const WIDTH_BUDGETS: Array = [
 	["Camera blocked (Ctrl+G)", 18, 236.0, "HUD camera toggle"],
 
 	# start_overlay.gd — CARD_WIDTH 420 with a 20 px content margin each side.
-	# One button since bead godot-test1-6pa dropped the SOLO / MULTIPLAYER fork.
+	# PLAY, or CONTINUE / NEW GAME when a saved run waits (bead godot-test1-i8yu.3):
+	# every choice button is full-width at BUTTON_FONT_SIZE 24, so one width holds
+	# all three.
 	# The card's hint line is exempt for the reason stated in the header above: it
 	# autowraps inside a container that grows.
 	["PLAY", 24, 380.0, "start overlay Play"],
+	["CONTINUE", 24, 380.0, "start overlay Continue"],
+	["NEW GAME", 24, 380.0, "start overlay New Game"],
 	# "PLAY SOLO" and "MULTIPLAYER" are no longer buttons, but their CSV rows stay
 	# — they are this file's own translation sentinels in `_check_fallback()` and
 	# `_check_live_switch()`, and `landmark_selfcheck` uses the first one too.

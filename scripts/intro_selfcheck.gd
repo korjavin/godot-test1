@@ -127,10 +127,35 @@ extends SceneTree
 ##     does not dismiss" would also be satisfied by an overlay nothing can
 ##     dismiss at all, which is the worse bug of the two.
 ##
+## 11. **CONTINUE / NEW GAME REPLACE PLAY WHEN A SAVE WAITS.** The one fork
+##     that earns a place on the card (bead `godot-test1-i8yu.3`): with a stub
+##     player answering `has_save()` false the card carries PLAY and no
+##     CONTINUE; with true it carries CONTINUE and NEW GAME and no PLAY, and
+##     standalone (no player in the tree, `style_shots.tscn`) it degrades to
+##     PLAY. CONTINUE calls the stub's `continue_save()` exactly once and never
+##     starts the film (owner ruling: you have seen it) — driven on
+##     `FilmOverlay`, so a mis-wire onto the PLAY path shows up as a started
+##     URL. NEW GAME clears the slot through `BestRunStore.clear_save_slot()`
+##     and then takes the PLAY path, film included. Enter / Space takes the
+##     default either way. The German faces come back translated (`tr()`
+##     explicitly), or the ui.csv row or the `--import` was forgotten. An
+##     archived world pins the seam the other way: the latch is set, yet a
+##     player answering false (the real player's answer there, pinned for
+##     `player_controller` in `save_selfcheck` check 7) still gets PLAY — the
+##     card trusts `has_save()`, never the slot.
+##
+## 12. **PLAY AGAIN RE-EVALUATES.** `reenter_for_new_run()` rebuilds the
+##     choices: a card that showed CONTINUE, dismissed through NEW GAME (which
+##     emptied the slot) and re-entered must show PLAY. Driven on `WebOverlay`,
+##     which opens the web gate headlessly — the same override seam as
+##     `PhoneOverlay` — so a re-entry that skips the rebuild keeps offering
+##     the ended world and fails.
+##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
 const StartOverlay := preload("res://scripts/start_overlay.gd")
 const GameOverUI := preload("res://scripts/game_over_ui.gd")
+const BestRunStore := preload("res://scripts/best_run_store.gd")
 
 
 ## The real start overlay with the film's two browser calls stubbed, so check 5
@@ -223,6 +248,8 @@ func _run() -> void:
 	_check_no_js_boolean_returns()
 	_check_card_names_multiplayer()
 	await _check_phone_card()
+	_check_continue_card()
+	_check_play_again_card()
 	_finish()
 
 
@@ -890,13 +917,43 @@ class RestartSpy extends Node:
 		restarts += 1
 
 
+## A stand-in for the player answering the save-slot question, in the `player`
+## group. The card finds the player by group and calls it by name — the same
+## seam `RestartSpy` uses — so this is the whole of it. `save_present` is the
+## answer a real player gives (pinned for `player_controller` in `save_selfcheck`
+## check 7); `continues` counts CONTINUE presses.
+class SaveStub extends Node:
+	var save_present: bool = false
+	var continues: int = 0
+
+	func _ready() -> void:
+		add_to_group("player")
+
+	func has_save() -> bool:
+		return save_present
+
+	func continue_save() -> bool:
+		continues += 1
+		return true
+
+
+## The real start overlay with the web gate open, so `_check_play_again_card()`
+## can drive the Play Again re-entry headlessly. The same override seam as
+## `PhoneOverlay` — and, like it, the ONLY thing overridden: the card, the
+## choices and the pause under test are all the shipping code's.
+class WebOverlay extends StartOverlay:
+	func _is_web_build() -> bool:
+		return true
+
+
 ## A live `start_overlay.gd` under the tree root, so `_ready()` really runs.
 ## Returns null (and fails) if the script did not attach — the same cold-clone
 ## trap `minimap_selfcheck.gd` documents: with an empty global class cache every
 ## `class_name` type (now including `IntroVideo`) fails to resolve, scripts
 ## silently do not load, and every assertion above would pass for the worst
 ## possible reason.
-## The card carries no fork and still points at multiplayer. Driven on the real
+## The card carries no MODE fork (CONTINUE / NEW GAME is a world choice, not a
+## mode choice) and still points at multiplayer. Driven on the real
 ## overlay so it measures what `_build_ui()` actually draws, not a copy of the
 ## strings.
 func _check_card_names_multiplayer() -> void:
@@ -1051,6 +1108,277 @@ func _check_phone_card() -> void:
 	overlay.queue_free()
 	paused = false
 	Sentinel.done("phone_card")
+
+
+# ============================================================================
+# 11. CONTINUE / NEW GAME ON THE CARD
+# ============================================================================
+
+## Bead `godot-test1-i8yu.3`: the card offers CONTINUE and NEW GAME instead of
+## PLAY when the player answers `has_save()` true. Driven against a `SaveStub`
+## in group `"player"` on `FilmOverlay`, so the CONTINUE press also proves the
+## film was NOT started (a mis-wire onto the PLAY path records a URL instead).
+func _check_continue_card() -> void:
+	# (a) STANDALONE — no player in the tree (`style_shots.tscn`): PLAY, no fork.
+	if not get_nodes_in_group("player").is_empty():
+		_fail("setup: group `player` is not empty before the card checks — a "
+			+ "leftover stand-in would answer for the standalone card")
+	var bare := FilmOverlay.new()
+	root.add_child(bare)
+	var buttons: Array[String] = []
+	var texts: Array[String] = []
+	_collect_card_text(bare, buttons, texts)
+	if buttons.is_empty():
+		_fail("the standalone start card has no buttons — every assertion below "
+			+ "would pass vacuously")
+	if not buttons.has("PLAY"):
+		_fail("the standalone start card has no PLAY button")
+	if buttons.has("CONTINUE") or buttons.has("NEW GAME"):
+		_fail("the standalone start card offers CONTINUE / NEW GAME with no player "
+			+ "to ask")
+	bare.queue_free()
+	paused = false
+
+	var stub := SaveStub.new()
+	stub.save_present = false
+	root.add_child(stub)
+
+	# (b) No save: PLAY exactly as today.
+	var plain := FilmOverlay.new()
+	root.add_child(plain)
+	buttons.clear()
+	texts.clear()
+	_collect_card_text(plain, buttons, texts)
+	if buttons.is_empty():
+		_fail("the no-save start card has no buttons — every assertion below "
+			+ "would pass vacuously")
+	if not buttons.has("PLAY"):
+		_fail("the no-save start card has no PLAY button")
+	if buttons.has("CONTINUE") or buttons.has("NEW GAME"):
+		_fail("the no-save start card offers CONTINUE / NEW GAME with no save waiting")
+	plain.queue_free()
+	paused = false
+
+	# (c) Save waiting: CONTINUE and NEW GAME, no PLAY.
+	stub.save_present = true
+	var waiting := FilmOverlay.new()
+	root.add_child(waiting)
+	buttons.clear()
+	texts.clear()
+	_collect_card_text(waiting, buttons, texts)
+	if buttons.is_empty():
+		_fail("the continue start card has no buttons — every assertion below "
+			+ "would pass vacuously")
+	if not buttons.has("CONTINUE") or not buttons.has("NEW GAME"):
+		_fail("the start card with a save waiting does not offer CONTINUE and NEW GAME")
+	if buttons.has("PLAY"):
+		_fail("the start card with a save waiting still offers PLAY")
+	waiting.queue_free()
+	paused = false
+
+	# (d) CONTINUE restores without the film: one `continue_save()`, no URL,
+	# dismissed. On `FilmOverlay` the PLAY path records a started URL, so this
+	# is also the mutation tripwire for CONTINUE mis-wired onto `_on_start_pressed`.
+	var direct := FilmOverlay.new()
+	root.add_child(direct)
+	stub.continues = 0
+	if not _press_card_button(direct, "CONTINUE"):
+		_fail("setup: the save-waiting card has no CONTINUE button to press")
+	if stub.continues != 1:
+		_fail("CONTINUE reached `continue_save()` %d times, not once" % stub.continues)
+	if direct._intro_playing or not direct.started_urls.is_empty():
+		_fail("CONTINUE started the intro film — it must dismiss straight to "
+			+ "the restored run")
+	if not direct._dismissed:
+		_fail("CONTINUE did not dismiss the start card")
+	direct.queue_free()
+	paused = false
+
+	# (d2) Enter / Space takes the default: CONTINUE when a save waits.
+	stub.save_present = true
+	stub.continues = 0
+	var keys := FilmOverlay.new()
+	root.add_child(keys)
+	var accept := InputEventAction.new()
+	accept.action = "ui_accept"
+	accept.pressed = true
+	keys._unhandled_input(accept)
+	if stub.continues != 1:
+		_fail("ui_accept with a save waiting did not take CONTINUE (%d restores)"
+			% stub.continues)
+	if keys._intro_playing or not keys.started_urls.is_empty():
+		_fail("ui_accept with a save waiting started the intro film")
+	keys.queue_free()
+	paused = false
+
+	# (d3) ...and the PLAY path when none does. The PLAY path on this stub starts
+	# the film, so ending it must dismiss the card — a press that reached
+	# nothing would leave it up.
+	stub.save_present = false
+	stub.continues = 0
+	var keys_plain := FilmOverlay.new()
+	root.add_child(keys_plain)
+	var accept2 := InputEventAction.new()
+	accept2.action = "ui_accept"
+	accept2.pressed = true
+	keys_plain._unhandled_input(accept2)
+	if stub.continues != 0:
+		_fail("ui_accept with no save waiting restored a run that is not there")
+	if keys_plain.started_urls.is_empty():
+		_fail("ui_accept with no save waiting reached no PLAY path — no film "
+			+ "was started")
+	keys_plain.film_over = true
+	keys_plain._process(1.0 / 60.0)
+	if not keys_plain._dismissed:
+		_fail("ui_accept with no save waiting did not take the PLAY path")
+	keys_plain.queue_free()
+	paused = false
+
+	# (e) NEW GAME clears the slot, then takes the PLAY path — film included.
+	# The recorded URL is the positive pin here: NEW GAME shares the PLAY path,
+	# where CONTINUE must not start one.
+	stub.save_present = true
+	BestRunStore.write_save_slot("bead-i8yu.3-probe")
+	if BestRunStore.save_slot().is_empty():
+		_fail("setup: the probe slot did not stick — the NEW GAME assertions "
+			+ "below would pass vacuously")
+	var fresh := FilmOverlay.new()
+	root.add_child(fresh)
+	if not _press_card_button(fresh, "NEW GAME"):
+		_fail("setup: the save-waiting card has no NEW GAME button to press")
+	if not BestRunStore.save_slot().is_empty():
+		_fail("NEW GAME did not clear the save slot — a player who closes the "
+			+ "tab mid-film is offered the old world again")
+	if fresh.started_urls.is_empty():
+		_fail("NEW GAME did not take the PLAY path — no film was started")
+	fresh.film_over = true
+	fresh._process(1.0 / 60.0)
+	if not fresh._dismissed:
+		_fail("NEW GAME took the PLAY path but the card never dismissed")
+	fresh.queue_free()
+	paused = false
+	BestRunStore.clear_save_slot()
+
+	# (f) The German faces exist (`tr()` explicitly): an unimported or misspelt
+	# CSV row hands the key straight back, and `--import` is what this catches.
+	var locale_was: String = TranslationServer.get_locale()
+	TranslationServer.set_locale("de")
+	if tr("CONTINUE") == "CONTINUE":
+		_fail("CONTINUE has no German translation — add the row to "
+			+ "assets/translations/ui.csv and re-run `godot --headless --path . --import`")
+	if tr("NEW GAME") == "NEW GAME":
+		_fail("NEW GAME has no German translation — add the row to "
+			+ "assets/translations/ui.csv and re-run `godot --headless --path . --import`")
+	TranslationServer.set_locale(locale_was)
+
+	# (g) ARCHIVED world: the latch is set (and .2's half — the archive clears
+	# the slot — is asserted as setup), yet a player answering false, the real
+	# player's answer there, still gets PLAY. The card trusts `has_save()`, never
+	# the slot.
+	BestRunStore.archive_world()
+	if not BestRunStore.save_slot().is_empty():
+		_fail("setup: the archive did not clear the slot — `save_selfcheck` "
+			+ "check 5 owns that half and is red")
+	stub.save_present = false
+	var after := FilmOverlay.new()
+	root.add_child(after)
+	buttons.clear()
+	texts.clear()
+	_collect_card_text(after, buttons, texts)
+	if not buttons.has("PLAY"):
+		_fail("the card on an archived world has no PLAY button")
+	if buttons.has("CONTINUE") or buttons.has("NEW GAME"):
+		_fail("the card on an archived world offers CONTINUE — the slot was "
+			+ "cleared at archive time")
+	after.queue_free()
+	paused = false
+	BestRunStore.new_game()
+	# Freed NOW, not queued: the next check joins its own stub to group `player`,
+	# and a queued node is still a member until the end of the frame.
+	root.remove_child(stub)
+	stub.free()
+	paused = false
+	Sentinel.done("continue_card")
+
+
+# ============================================================================
+# 12. PLAY AGAIN RE-EVALUATES
+# ============================================================================
+
+## `reenter_for_new_run()` rebuilds the card's choices: a card that showed
+## CONTINUE, dismissed through NEW GAME (which emptied the slot) and re-entered
+## for the next run must show PLAY. Driven on `WebOverlay` with a `SaveStub`
+## mirroring the slot — true while the world waits, false once the restart
+## cleared it.
+func _check_play_again_card() -> void:
+	var stub := SaveStub.new()
+	stub.save_present = true
+	root.add_child(stub)
+	if get_nodes_in_group("player").size() != 1:
+		_fail("setup: group `player` does not hold exactly this check's stub — "
+			+ "the card would ask a leftover stand-in")
+	var overlay := WebOverlay.new()
+	root.add_child(overlay)
+
+	var buttons: Array[String] = []
+	var texts: Array[String] = []
+	_collect_card_text(overlay, buttons, texts)
+	if not buttons.has("CONTINUE"):
+		_fail("setup: the card with a save waiting shows no CONTINUE — the "
+			+ "re-entry assertions below would pass vacuously")
+
+	# Through NEW GAME: the real slot is emptied and the card dismisses down the
+	# ordinary (off-web, synchronous) PLAY path.
+	BestRunStore.write_save_slot("bead-i8yu.3-play-again-probe")
+	if not _press_card_button(overlay, "NEW GAME"):
+		_fail("setup: the save-waiting card has no NEW GAME button to press")
+	if not overlay._dismissed:
+		_fail("setup: NEW GAME did not dismiss the card off-web — the re-entry "
+			+ "below starts from the wrong state")
+	if not BestRunStore.save_slot().is_empty():
+		_fail("setup: NEW GAME did not empty the slot — the re-entry below "
+			+ "starts from the wrong state")
+
+	# The restart cleared the checkpoint: the player answers false now, and the
+	# re-entered card must ask again instead of keeping the ended world's buttons.
+	stub.save_present = false
+	overlay.reenter_for_new_run()
+	if overlay._dismissed:
+		_fail("reenter_for_new_run() left the card dismissed — Play Again shows "
+			+ "no card at all")
+	buttons.clear()
+	texts.clear()
+	_collect_card_text(overlay, buttons, texts)
+	if buttons.is_empty():
+		_fail("the re-entered card has no buttons — the assertions below would "
+			+ "pass vacuously")
+	if not buttons.has("PLAY"):
+		_fail("Play Again after a restart shows no PLAY — the card kept offering "
+			+ "the ended world")
+	if buttons.has("CONTINUE") or buttons.has("NEW GAME"):
+		_fail("Play Again after a restart still offers CONTINUE — "
+			+ "reenter_for_new_run() did not re-evaluate has_save()")
+
+	overlay.queue_free()
+	root.remove_child(stub)
+	stub.free()
+	paused = false
+	Sentinel.done("play_again_card")
+
+
+## Press the card button labelled `label`, through the REAL wiring: emitting the
+## Button signal runs whatever  actually connected, so a
+## CONTINUE mis-wired onto the PLAY path (or a NEW GAME that forgot its clear)
+## is driven, not the handler it should have called. False when no such button
+## exists, so a missing button fails loudly instead of passing vacuously.
+func _press_card_button(node: Node, label: String) -> bool:
+	if node is Button and (node as Button).text == label:
+		(node as Button).pressed.emit()
+		return true
+	for child: Node in node.get_children():
+		if _press_card_button(child, label):
+			return true
+	return false
 
 
 ## Every Button label and every piece of text under `node`, gathered separately
