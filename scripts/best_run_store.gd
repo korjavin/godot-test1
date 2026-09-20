@@ -406,10 +406,15 @@ var _post_http: HTTPRequest = null
 var _save_get_http: HTTPRequest = null
 var _save_post_http: HTTPRequest = null
 
-## The last save verb this instance STARTED ("GET", "POST", "DELETE", "" when
-## none): observability for `save_selfcheck`, which pins that fetch GETs, a
-## push POSTs and a clear DELETEs. Recorded before `request()`, so a refused
-## lobby still records the attempt.
+## The clear's own node (round 1: the DELETE reused the POST node and died on
+## ERR_BUSY behind every checkpoint push — node-per-verb, as `/best`'s split).
+var _save_delete_http: HTTPRequest = null
+
+## The last save verb this instance STARTED ("GET", "POST", "DELETE" for the
+## clear effect, "" when none): observability for `save_selfcheck`, which pins
+## that fetch GETs, a push POSTs and a clear DELETEs. Recorded only when
+## `request()` accepted the request — a refused lobby still records it (the
+## request starts, then fails async), while an ERR_BUSY overlap records nothing.
 var _last_save_verb: String = ""
 
 ## The `saved_at` the in-flight save POST carried. A reply adopts only when
@@ -1154,8 +1159,21 @@ static func _notify_save_cleared() -> void:
 			continue
 		kept.append(ref)
 		if inst.is_inside_tree():
+			# The GET first: a boot fetch still in flight must not resurrect
+			# the slot just cleared (NEW GAME while the lobby is slow).
+			inst._cancel_save_get()
 			inst._request_save_delete()
 	_save_sync_live = kept
+
+
+func _cancel_save_get() -> void:
+	"""Drop an in-flight cloud-slot GET, with its one-shot, so a late reply
+	cannot land on a slot cleared after the request started."""
+	if _save_get_http == null:
+		return
+	_save_get_http.cancel_request()
+	if _save_get_http.request_completed.is_connected(_on_save_get_completed):
+		_save_get_http.request_completed.disconnect(_on_save_get_completed)
 
 
 func _load_or_make_player_id() -> String:
@@ -1402,9 +1420,11 @@ func _request_save_get() -> void:
 		_save_get_http = HTTPRequest.new()
 		_save_get_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_save_get_http)
-	_last_save_verb = "GET"
 	if _save_get_http.request(_save_endpoint()) != OK:
 		return
+	# Recorded only on a started request: the check pins the verb the lobby
+	# actually received, not the intent.
+	_last_save_verb = "GET"
 	_save_get_http.request_completed.connect(_on_save_get_completed, CONNECT_ONE_SHOT)
 
 
@@ -1469,17 +1489,22 @@ func push_save_slot() -> void:
 	var snap := SaveState.decode(raw)
 	if snap.is_empty():
 		return
-	_save_post_sent_at = int(snap.get("saved_at", 0))
-	var out := JSON.stringify({"blob": raw, "saved_at": _save_post_sent_at})
+	var sent_at := int(snap.get("saved_at", 0))
+	var out := JSON.stringify({"blob": raw, "saved_at": sent_at})
 	if _save_post_http == null:
 		_save_post_http = HTTPRequest.new()
 		_save_post_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_save_post_http)
-	_last_save_verb = "POST"
 	if _save_post_http.request(
 		_save_endpoint(), ["Content-Type: application/json"], HTTPClient.METHOD_POST, out
 	) != OK:
 		return
+	# Both set only on a started request: on ERR_BUSY the baseline must keep
+	# the in-flight POST's stamp, or a genuinely newer server record is skipped
+	# (round 1 minor 6) — and the verb must name what the lobby received
+	# (round 1 MAJOR 2).
+	_save_post_sent_at = sent_at
+	_last_save_verb = "POST"
 	_save_post_http.request_completed.connect(_on_save_post_completed, CONNECT_ONE_SHOT)
 
 
@@ -1514,13 +1539,28 @@ func _on_save_post_completed(
 
 func _request_save_delete() -> void:
 	"""DELETE the cloud slot. Fire-and-forget: no reply is read, every failure
-	silent — the local clear already happened, and a dropped verb only costs a
-	stale server copy that LWW settles on the next write."""
+	silent — the local clear already happened. Own node (round 1 MAJOR 1: sharing
+	the POST node died on ERR_BUSY behind every checkpoint push, so the clear
+	never left and the next boot resurrected the ended campaign cross-device).
+	On a start failure the clearing POST below is tried instead — the server
+	clears on an empty blob too — so a dropped verb only costs a stale server
+	copy that LWW settles on the next write. The verb recorded is the EFFECT
+	(clear), whichever method carried it, and only when one actually started."""
 	if player_id().is_empty():
+		return
+	if _save_delete_http == null:
+		_save_delete_http = HTTPRequest.new()
+		_save_delete_http.timeout = REQUEST_TIMEOUT_SEC
+		add_child(_save_delete_http)
+	if _save_delete_http.request(_save_endpoint(), [], HTTPClient.METHOD_DELETE) == OK:
+		_last_save_verb = "DELETE"
 		return
 	if _save_post_http == null:
 		_save_post_http = HTTPRequest.new()
 		_save_post_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_save_post_http)
-	_last_save_verb = "DELETE"
-	_save_post_http.request(_save_endpoint(), [], HTTPClient.METHOD_DELETE)
+	# No reply handler: the answer to a clear is nothing, and an empty blob
+	# decodes as no-save anyway.
+	if _save_post_http.request(_save_endpoint(), ["Content-Type: application/json"],
+			HTTPClient.METHOD_POST, JSON.stringify({"blob": "", "saved_at": 0})) == OK:
+		_last_save_verb = "DELETE"

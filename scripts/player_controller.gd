@@ -4480,7 +4480,8 @@ func write_save() -> void:
 	if not stored.is_empty() and _save_rest_key(stored) == _save_rest_key(snap):
 		return
 	BestRunStore.write_save_slot(SaveState.encode(snap))
-	if best_run_store: best_run_store.push_save_slot()
+	if best_run_store:
+		best_run_store.push_save_slot()
 
 
 func has_save() -> bool:

@@ -92,7 +92,12 @@ extends SceneTree
 ##   16. WIRE UNTOUCHED. `mp_codec.gd` / `mp_manager.gd` carry no save-sync seam
 ##      (the pause_selfcheck grep idiom, comments stripped).
 ##   17. VERBS. `fetch()` GETs the cloud slot, a push POSTs it, and
-##      `clear_save_slot()` DELETEs it (and empties the local slot).
+##      `clear_save_slot()` DELETEs it (and empties the local slot). Verbs are
+##      recorded only when `request()` accepted them (round 1 MAJOR 2), on a
+##      dedicated node per verb (round 1 MAJOR 1).
+##   18. CARD FLIP. A card built with no save waiting shows PLAY; after a save
+##      lands and `save_loaded` fires, it rebuilds to CONTINUE / NEW GAME —
+##      and dismissing the card disconnects the listener (round 1 MAJOR 4).
 ##
 ## Bead .5's mutations, each naming its check: M1 (boot compare flipped —
 ## older-or-equal wins) fails check 13's replace AND ignore asserts; M2 (POST
@@ -143,6 +148,13 @@ const SAVE_AT_SENT: int = 1758326400
 const SAVE_AT_NEWER: int = 1758326500
 const SAVE_AT_OLDER: int = 1758326300
 
+## A stamp NEWER than any arranged slot (round 1 MAJOR 3): the v=2 and oversize
+## bad replies carry this, so the decoder — never the LWW stamp — is what
+## rejects them.
+const SAVE_AT_NEWER2: int = 1758326600
+
+const StartOverlay := preload("res://scripts/start_overlay.gd")
+
 var _failures: Array[String] = []
 
 
@@ -169,6 +181,7 @@ func _initialize() -> void:
 	await _check_save_silent_offline()
 	_check_save_wire_untouched()
 	await _check_save_verbs()
+	await _check_save_card_flip()
 	_report()
 
 
@@ -1034,9 +1047,9 @@ func _check_save_boot_lww() -> void:
 	var store := await _make_save_store()
 	var fired: Array = []
 	store.save_loaded.connect(func() -> void: fired.append(1))
-	var sent := _save_blob_at(SAVE_AT_SENT)
 	var newer := _save_blob_at(SAVE_AT_NEWER)
 	var older := _save_blob_at(SAVE_AT_OLDER)
+	var newer2 := _save_blob_at(SAVE_AT_NEWER2)
 	# Arrange an older local slot: the newer reply must win it.
 	BestRunStore.write_save_slot(older)
 	_expect(BestRunStore.save_slot() == older, "setup: the older slot should be arranged")
@@ -1055,12 +1068,17 @@ func _check_save_boot_lww() -> void:
 	# Every bad reply reads as no cloud save. The count IS the assertion: a
 	# dropped variant fails here, not silently.
 	var padding: String = "".lpad(SaveState.MAX_SAVE_BYTES + 1 - newer.length(), " ")
+	# The v=2 and oversize variants are stamped NEWER than the arranged slot:
+	# a decoder replaced by a bare JSON parse would adopt them, so only
+	# `SaveState.decode` stands between them and the slot (round 1 MAJOR 3).
+	# The far-future envelope instead pins the other gate — the envelope stamp
+	# is never trusted — with an older blob a trusting reader would take.
 	var bad: Array = [
 		_save_reply("", 0),
 		_save_reply("garbage", 0),
 		_save_reply("[]", 0),
-		_save_reply(newer.replace("\"v\":1", "\"v\":2"), 0),
-		_save_reply(newer + padding, 0),
+		_save_reply(newer2.replace("\"v\":1", "\"v\":2"), SAVE_AT_NEWER2),
+		_save_reply(_save_blob_at(SAVE_AT_NEWER2) + padding, SAVE_AT_NEWER2),
 		_save_reply(older, 9999999999),
 	]
 	var tried := 0
@@ -1217,3 +1235,71 @@ func _check_save_verbs() -> void:
 		"clear should empty the slot (negative control)")
 	store.queue_free()
 	Sentinel.done("save_verbs")
+
+
+# ---------------------------------------------------------------------------
+# CHECK 18 — the start card flips PLAY to CONTINUE on save_loaded (round 1.4)
+# ---------------------------------------------------------------------------
+
+func _card_buttons(card: Node) -> Array[String]:
+	# Every Button face under the card, in tree order (`intro_selfcheck` reads
+	# the same faces for the same choice).
+	var out: Array[String] = []
+	_collect_card_buttons(card, out)
+	return out
+
+
+func _collect_card_buttons(node: Node, out: Array[String]) -> void:
+	if node is Button:
+		out.append((node as Button).text)
+	for child: Node in node.get_children():
+		_collect_card_buttons(child, out)
+
+
+func _check_save_card_flip() -> void:
+	BestRunStore.clear_save_slot()
+	_expect(get_nodes_in_group("player").is_empty(),
+		"setup: group `player` should be empty — a leftover would answer for the card")
+	var terrain = await _make_terrain()
+	if terrain == null:
+		Sentinel.done("save_card_flip")
+		return
+	terrain.set_run_seed(ROUND_TRIP_SEED)
+	var player = await _make_player()
+	if player == null:
+		await _clear_world(terrain, null, null)
+		Sentinel.done("save_card_flip")
+		return
+	var store: Node = player.get("best_run_store")
+	_expect(store != null, "setup: the player should own its save store")
+	if store == null:
+		await _clear_world(terrain, player, null)
+		Sentinel.done("save_card_flip")
+		return
+	# Built with no save waiting: PLAY, and the card listens from birth.
+	var card := StartOverlay.new()
+	root.add_child(card)
+	await process_frame
+	var plain := _card_buttons(card)
+	_expect(not plain.is_empty(),
+		"the no-save card should have buttons — every assertion below would pass vacuously")
+	_expect(plain.has("PLAY"), "the no-save card should offer PLAY")
+	_expect(not plain.has("CONTINUE"), "the no-save card should not offer CONTINUE yet")
+	_expect(store.save_loaded.is_connected(card._refresh_start_choices),
+		"the card should listen for save_loaded while it shows")
+	# A save lands and the boot reply fires: the card rebuilds in place.
+	BestRunStore.write_save_slot(LITERAL)
+	store.save_loaded.emit()
+	var flipped := _card_buttons(card)
+	_expect(flipped.has("CONTINUE") and flipped.has("NEW GAME"),
+		"save_loaded should flip the card to CONTINUE / NEW GAME")
+	_expect(not flipped.has("PLAY"), "the flipped card should no longer offer PLAY")
+	# Dismiss stands it down and drops the listener: a later fire rebuilds nothing.
+	card._dismiss()
+	_expect(card._dismissed, "dismiss should stand the card down")
+	_expect(not store.save_loaded.is_connected(card._refresh_start_choices),
+		"dismiss should disconnect the card's save listener")
+	card.queue_free()
+	paused = false
+	await _clear_world(terrain, player, null)
+	Sentinel.done("save_card_flip")
