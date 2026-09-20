@@ -3416,11 +3416,13 @@ func _check_parked_bikes(terrain_script: GDScript) -> void:
 							% [seed_value, idx, String(anchors[idx]["id"]), n, world]
 						+ "past chunk %s plus the rack's own half-length — built " % home
 						+ "by a chunk it does not stand in")
-				var sx: float = bt.basis.x.length()
-				var sz: float = bt.basis.z.length()
+				# UNSCALED unit corners: the record's basis already carries the
+				# dims (`rot.scaled_local(dimensions)` in `create_box`), so scaling
+				# again would shrink every box toward its centre and this would pass
+				# with a wheel outside the circle.
 				for cx in [-1.0, 1.0]:
 					for cz in [-1.0, 1.0]:
-						var corner: Vector3 = bt * Vector3(cx * 0.5 * sx, 0.0, cz * 0.5 * sz)
+						var corner: Vector3 = bt * Vector3(cx * 0.5, 0.0, cz * 0.5)
 						var cworld := Vector2(centre.x + corner.x, centre.z + corner.z)
 						if cworld.distance_to(Vector2(mpos.x, mpos.z)) > BikePaths.RACK_RADIUS:
 							_fail("P seed %d anchor %d (%s): bike record %d has a corner "
