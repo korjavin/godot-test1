@@ -340,6 +340,20 @@ var own_distance: int = 0
 ## it is the run's position on the shared map, not a personal record.
 var own_distance_origin: Vector2 = Vector2.ZERO
 
+## Already-banked personal metres this run (send-back i8yu.2 round 1): the
+## restore seats it from the save with the origin under the body, so the
+## personal figure keeps climbing from the checkpoint instead of freezing at
+## the saved value until it is walked twice. Zero except across a restore —
+## fresh runs, joins and hard resets all re-zero it beside the origin.
+var own_distance_base: int = 0
+
+## The headline's own copy of the same idiom: what `own_distance_base` is to
+## the personal record, this is to the map figure. Its origin is NEVER shifted
+## by a teleport (a hop moves the headline today, by documented definition),
+## only re-seated by a restore, a join or a hard reset.
+var run_distance_base: int = 0
+var run_distance_origin: Vector2 = Vector2.ZERO
+
 ## Headline score: how far this run has travelled, in metres — the farthest
 ## HORIZONTAL DISPLACEMENT from the (0,0) spawn point ever reached this run.
 ## (Originally this tracked farthest world X — the coin road's forward axis —
@@ -1499,11 +1513,10 @@ func _physics_process(delta: float) -> void:
 	# for why displacement, not raw X). Spawn is world (0,0) on the XZ plane, so
 	# the displacement is just the length of the horizontal position.
 	var here := Vector2(global_position.x, global_position.z)
-	var travelled: int = int(here.length())
-	run_distance = maxi(run_distance, travelled)
+	run_distance = maxi(run_distance, run_distance_base + int((here - run_distance_origin).length()))
 	# Measured from own_distance_origin, which is the spawn except after a mid-run
 	# join — see that field for why the personal record cannot use `travelled`.
-	own_distance = maxi(own_distance, int((here - own_distance_origin).length()))
+	own_distance = maxi(own_distance, own_distance_base + int((here - own_distance_origin).length()))
 
 	# STEP 0.41: Checkpoint those records on a slow timer. See BANK_INTERVAL — a
 	# session that never takes a bite must not be lost to a closed tab.
@@ -1514,6 +1527,10 @@ func _physics_process(delta: float) -> void:
 	# STEP 0.42: the HQ wall crossing, both directions — one group lookup and
 	# pure math per tick (`_tick_prison`'s precedent), writing only on the flip.
 	_poll_hq_crossing()
+	# Pending lift landings drain the first tick a shell exists — and only
+	# while non-empty, so the steady state pays one `is_empty()`.
+	if not _pending_lift_ids.is_empty():
+		_drain_pending_lift_ids()
 
 	# STEP 0.42: In a multiplayer room remember the bank reads (see
 	# _refresh_shared_totals) — the HUD's own line stays personal. Done here,
@@ -3664,7 +3681,10 @@ func reset_position() -> void:
 	coins_collected = 0
 	own_coins = 0  # ... and this peer's share of a room's bank along with it.
 	run_distance = 0
+	run_distance_base = 0
+	run_distance_origin = Vector2.ZERO
 	own_distance = 0
+	own_distance_base = 0
 	own_distance_origin = Vector2.ZERO  # ... back to the origin spawn it teleports to.
 	run_beat_record = false  # ... and the new run has not beaten anything yet.
 	record_coins = 0
@@ -3679,6 +3699,7 @@ func reset_position() -> void:
 	# else's world would win it on arrival (codex review 2026-09-02).
 	explored_mask = 0
 	_save_last_landing = ""
+	_pending_lift_ids = []
 	# ...AND SO ARE THE WAYPOINTS, for the identical reason one line up (epic
 	# godot-test1-sc6, owner ruling 2026-09-12: per-run). Stepping onto a circle
 	# is not EARNED, so it rides no monotone store — and this is the site the
@@ -3827,6 +3848,7 @@ func join_at(anchor: Vector3) -> void:
 	# The personal distance record restarts from where we arrived, or the group's
 	# kilometres are banked into user://best_run.cfg as ours (see the field).
 	own_distance = 0
+	own_distance_base = 0
 	own_distance_origin = Vector2(global_position.x, global_position.z)
 	# run_distance goes with them, and for the same reason one level up: it is a
 	# running MAX and it is what this peer publishes as the room's distance (`dd`
@@ -3836,6 +3858,8 @@ func join_at(anchor: Vector3) -> void:
 	# EVERYONE, permanently, because a max never comes back down. The room's real
 	# figure arrives from the snapshots and the next presence packet.
 	run_distance = 0
+	run_distance_base = 0
+	run_distance_origin = Vector2.ZERO
 	# ...and so does the record LATCH, because it is derived from the coins the
 	# lines above just wiped. It is set by `_bank_records()` on a bite and read
 	# once at the ending; left standing from a solo leg it would flash "NEW BEST!"
@@ -3850,6 +3874,7 @@ func join_at(anchor: Vector3) -> void:
 	# master's join snapshot (`lm`) moments later.
 	explored_mask = 0
 	_save_last_landing = ""
+	_pending_lift_ids = []
 	# ...AND SO DO THE WAYPOINTS (epic godot-test1-sc6). Sharper here than for
 	# Budapest, whose slots are authored constants: three of the eleven circles
 	# stand on the ROAD, whose stations are a pure function of `run_seed`, so a
@@ -4351,6 +4376,14 @@ var _save_last_in_hq: bool = false
 ## `explored_mask`/`waypoint_mask` are wiped, by assignment beside them.
 var _save_last_landing: String = ""
 
+## Lift landings restored while no shell is streamed (send-back i8yu.2 round
+## 1): a field restore far from the tower has no shell to re-mark into, and
+## the landings are deliberately not in the profile — so without this they
+## would be gone at the next snapshot. Kept on the player until a shell exists
+## (`_drain_pending_lift_ids()`, every tick while non-empty), carried in
+## `save_snapshot()` while pending, and reset with the run beside the masks.
+var _pending_lift_ids: Array = []
+
 
 func _notification(what: int) -> void:
 	"""
@@ -4400,7 +4433,12 @@ func save_snapshot() -> Dictionary:
 		for id in Array(shell.call("earned_ids")):
 			if TowerGraph.is_lift_stop_id(String(id)):
 				lift_ids.append(String(id))
-		lift_ids.sort()
+	# ...plus what is still waiting for a shell (MAJOR 1): pending ids are
+	# restored landings no snapshot may drop.
+	for id in _pending_lift_ids:
+		if not lift_ids.has(String(id)):
+			lift_ids.append(String(id))
+	lift_ids.sort()
 	var captives_now: Array = []
 	for hero in captive_heroes.keys():
 		captives_now.append(String(hero))
@@ -4464,9 +4502,12 @@ func continue_save() -> bool:
 	in front, through the only door (`set_run_seed` is the only seed write and
 	`new_run()` is the door) — then the joiner tail (`build_ring_now`, one
 	physics frame, `_place_near`), or the lift stand when the save was taken
-	indoors; then hero, captives, masks, lift and coins through the existing
-	seams. The lift ids are re-marked AFTER `new_run` returns and the shell
-	rehydrated (it reads the profile on build), or the landings are lost on load.
+	indoors; then the REPLACEMENT through the existing seams (never a merge:
+	captives the checkpoint lacks leave first, masks assign, lift ids re-mark
+	or wait pending). The lift ids are re-marked AFTER `new_run` returns and
+	the shell rehydrated (it reads the profile on build), or the landings are
+	lost on load. Distance seats base + offset, so both figures keep climbing
+	from the checkpoint instead of freezing at it.
 	"""
 	if _continue_busy:
 		return false
@@ -4505,6 +4546,12 @@ func continue_save() -> bool:
 	if not placed:
 		_continue_busy = false
 		return false
+	# A RESTORE REPLACES THE RUN'S PER-RUN STATE (send-back i8yu.2 round 1) —
+	# it never merges into it. First the captives the checkpoint does not have
+	# leave through the SAME mirror seam, so the tower follows them out; a hero
+	# captured after the save stays jailed otherwise.
+	for hero in captive_heroes.keys():
+		set_hero_captive(String(hero), false)
 	# The auto-switch seam, never the cycle: the cycle refuses mid-ability
 	# presses and a restore is not a press (`_capture_active_hero`'s reason).
 	set_active_character(int(saved["hero"]))
@@ -4512,23 +4559,35 @@ func continue_save() -> bool:
 	# — never a direct `captive_heroes[...]` write, which the tower would not see.
 	for hero in Array(saved["captives"]):
 		set_hero_captive(String(hero), true)
-	# The OR idiom, never assignment: these sets only ever grow inside a run.
-	adopt_explored_mask(int(saved["explored"]))
-	adopt_waypoint_mask(int(saved["waypoints"]))
+	# Assignment, not the OR idiom: "only grows inside a run" is for a run, not
+	# for loading one. The win check still runs, so a crafted eighteen still wins.
+	explored_mask = int(saved["explored"])
+	_check_budapest_win()
+	waypoint_mask = int(saved["waypoints"])
 	var shell := get_tree().get_first_node_in_group("tower")
-	if shell != null and shell.has_method("mark_opened"):
-		for stop_id in Array(saved["lift"]):
+	var fresh_pending: Array = []
+	for stop_id in Array(saved["lift"]):
+		if shell != null and shell.has_method("mark_opened"):
 			# publish=false (no wire: nothing on the wire changed), persist=true:
 			# the store's own sanitizer keeps the per-run landing off the disk
 			# while `earned` re-seats it in memory for the run — which is also
 			# what keeps the NEXT snapshot carrying it.
 			shell.call("mark_opened", String(stop_id), false, true)
+		else:
+			# No shell streamed (a field restore far from the tower): the ids
+			# wait on the player instead of dying with this frame (MAJOR 1).
+			fresh_pending.append(String(stop_id))
+	_pending_lift_ids = fresh_pending
 	own_coins = int(saved["coins"])
 	coins_collected = own_coins
+	# Base + offset (MAJOR 3): the checkpoint's metres stay banked while both
+	# figures measure the new travel from here. A reset would freeze the counters
+	# at the saved value until it was walked twice.
 	run_distance = int(saved["distance"])
+	run_distance_base = run_distance
+	run_distance_origin = Vector2(global_position.x, global_position.z)
 	own_distance = run_distance
-	# A RESTORE IS NOT DISTANCE RUN — `debug_teleport_to`'s line, as an origin
-	# reset rather than a shift: the same arithmetic, stated once.
+	own_distance_base = own_distance
 	own_distance_origin = Vector2(global_position.x, global_position.z)
 	_reset_ability_states()
 	clear_nearby_crocodiles(global_position)
@@ -4615,6 +4674,21 @@ func _move_to_landing(saved: Dictionary) -> bool:
 	global_position = interior.global_position + stand
 	velocity = Vector3.ZERO
 	return true
+
+
+func _drain_pending_lift_ids() -> void:
+	"""
+	Hand restored lift landings to a newly streamed shell (MAJOR 1): the same
+	`mark_opened` seating a present shell gets, deferred until there is one.
+	Silent — the slot already carries the ids (the snapshot unions them), so
+	no checkpoint is owed.
+	"""
+	var shell := get_tree().get_first_node_in_group("tower")
+	if shell == null or not shell.has_method("mark_opened"):
+		return
+	for stop_id in _pending_lift_ids:
+		shell.call("mark_opened", String(stop_id), false, true)
+	_pending_lift_ids.clear()
 
 
 func _poll_hq_crossing() -> void:

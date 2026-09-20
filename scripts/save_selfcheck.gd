@@ -48,6 +48,13 @@ extends SceneTree
 ##      with an earned stop restores at that landing's lift stand — up-storey,
 ##      far from the door's outside point, with the lift re-lit; with no
 ##      landing earned it restores at the entry.
+##   10. RESTORE REPLACES (send-back round 1). Captives the checkpoint lacks
+##      leave through the mirror seam both ways; masks assign, never OR.
+##   11. DISTANCE ACCUMULATES (send-back round 1). Base + offset: 100 m past a
+##      1200 m checkpoint reads 1300 on both figures, not a frozen 1200.
+##   12. PENDING LIFT (send-back round 1). A shell-less restore waits its
+##      landings on the player: the next snapshot still carries them, and the
+##      first streamed shell earns them.
 ##
 ## NON-VACUOUS by construction (bead .1 names the shape): checks 1, 3 and 4
 ## expect VALUES, not `{}`. The named mutations each turn a check RED:
@@ -61,6 +68,8 @@ extends SceneTree
 ## (the change gate removed) fails check 8's byte-identical assert; M5
 ## (`archive_world` stops clearing) fails check 5 — plus the landing mutation
 ## (indoor restore at the door instead of the landing) fails check 9.
+## Round-1 mutations, one per MAJOR: restore-the-merge fails check 10, drop
+## the pending list fails check 12, origin-without-base fails check 11.
 
 ## The end-of-check sentinel — see `scripts/selfcheck_sentinel.gd` for why every
 ## check stamps itself and the report site never prints SELFCHECK OK itself.
@@ -106,6 +115,9 @@ func _initialize() -> void:
 	await _check_refusals()
 	await _check_change_gate()
 	await _check_hq_restore_at_landing()
+	await _check_restore_replaces()
+	await _check_distance_accumulates()
+	await _check_pending_lift_ids()
 	_report()
 
 
@@ -422,6 +434,14 @@ func _check_player_round_trip() -> void:
 	var player2 = await _make_player()
 	var tower2 = await _make_shell_at(terrain2.tower_site())
 	var spy := CaptiveSpy.new()
+	# Parked far from anywhere the harness stands: the spy is only a
+	# `set_captive` seam, but `_is_in_hq_now()` answers off WHATEVER node is in
+	# the group — a spy at the origin reads "indoors" for the spawning player,
+	# the crossing edge flips, and its auto-checkpoint clobbers the slot before
+	# `continue_save()` reads it (deterministic at --fixed-fps, load-flaky
+	# otherwise, invisible at full speed where no physics step lands in the
+	# one-frame window).
+	spy.position = Vector3(5000.0, 0.0, 5000.0)
 	spy.add_to_group("tower_interior")
 	root.add_child(spy)
 	await process_frame
@@ -753,3 +773,174 @@ func _clear_world(terrain: Node, player: Node, tower: Node) -> void:
 			node.queue_free()
 	await process_frame
 	await physics_frame
+
+# ---------------------------------------------------------------------------
+# CHECK 10 — a restore REPLACES per-run state, never merges into it
+# ---------------------------------------------------------------------------
+
+func _check_restore_replaces() -> void:
+	BestRunStore.clear_save_slot()
+	var terrain = await _make_terrain()
+	if terrain == null:
+		Sentinel.done("restore_replaces")
+		return
+	terrain.set_run_seed(ROUND_TRIP_SEED)
+	# The checkpoint: hero 1, a small tally, NOBODY captive, small masks.
+	var writer = await _make_player()
+	if writer == null:
+		await _clear_world(terrain, null, null)
+		Sentinel.done("restore_replaces")
+		return
+	writer.set_active_character(1)
+	writer.set("own_coins", 5)
+	writer.set("coins_collected", 5)
+	writer.set("own_distance", 60)
+	writer.set("run_distance", 60)
+	writer.set("explored_mask", 7)
+	writer.set("waypoint_mask", 3)
+	writer.global_position = ROUND_TRIP_POS
+	writer.write_save()
+	_expect(writer.has_save(), "setup: the checkpoint should be restorable")
+	await _clear_world(terrain, writer, null)
+	# A running player who has since been playing: primm captured, wide masks,
+	# a big tally — none of it in the checkpoint.
+	var terrain2 = await _make_terrain()
+	if terrain2 == null:
+		Sentinel.done("restore_replaces")
+		return
+	var player2 = await _make_player()
+	var spy := CaptiveSpy.new()
+	spy.position = Vector3(5000.0, 0.0, 5000.0)
+	spy.add_to_group("tower_interior")
+	root.add_child(spy)
+	await process_frame
+	if player2 == null:
+		spy.queue_free()
+		await _clear_world(terrain2, null, null)
+		Sentinel.done("restore_replaces")
+		return
+	player2.set_hero_captive("primm", true)
+	player2.set("own_coins", 999)
+	player2.set("explored_mask", 255)
+	player2.set("waypoint_mask", 1023)
+	_expect(await player2.continue_save(), "continue_save should accept the slot")
+	# The checkpoint's roster, not the union: primm walks free again, through
+	# the mirror seam both ways.
+	var captives_back: Dictionary = player2.get("captive_heroes")
+	_expect(captives_back.is_empty(), "captives the checkpoint lacks should leave")
+	_expect(spy.calls == [["primm", true], ["primm", false]],
+		"the tower mirror should follow captives out as well as in")
+	_expect(player2.get("explored_mask") == 7, "explored mask should be replaced")
+	_expect(player2.get("waypoint_mask") == 3, "waypoint mask should be replaced")
+	_expect(player2.get("current_character_index") == 1, "hero should restore")
+	_expect(player2.get("own_coins") == 5, "coins should restore")
+	spy.queue_free()
+	await _clear_world(terrain2, player2, null)
+	Sentinel.done("restore_replaces")
+
+
+# ---------------------------------------------------------------------------
+# CHECK 11 — distance keeps climbing from the checkpoint (base + offset)
+# ---------------------------------------------------------------------------
+
+func _check_distance_accumulates() -> void:
+	BestRunStore.clear_save_slot()
+	var terrain = await _make_terrain()
+	if terrain == null:
+		Sentinel.done("distance_accumulates")
+		return
+	terrain.set_run_seed(ROUND_TRIP_SEED)
+	var writer = await _make_player()
+	if writer == null:
+		await _clear_world(terrain, null, null)
+		Sentinel.done("distance_accumulates")
+		return
+	writer.set("own_distance", 1200)
+	writer.set("run_distance", 1200)
+	writer.global_position = ROUND_TRIP_POS
+	writer.write_save()
+	_expect(writer.has_save(), "setup: the 1200 m checkpoint should be restorable")
+	await _clear_world(terrain, writer, null)
+	var terrain2 = await _make_terrain()
+	if terrain2 == null:
+		Sentinel.done("distance_accumulates")
+		return
+	var player2 = await _make_player()
+	if player2 == null:
+		await _clear_world(terrain2, null, null)
+		Sentinel.done("distance_accumulates")
+		return
+	_expect(await player2.continue_save(), "continue_save should accept the slot")
+	# Seated, not frozen: both figures read the checkpoint with the new travel
+	# measured from under the body.
+	_expect(player2.get("own_distance") == 1200, "own distance should restore")
+	_expect(player2.get("run_distance") == 1200, "run distance should restore")
+	_expect(player2.get("own_distance_base") == 1200, "own base should seat")
+	_expect(player2.get("run_distance_base") == 1200, "run base should seat")
+	# 100 m on foot counts from the checkpoint, not from zero and not from a
+	# second 1200: an origin reset without the base (the old code) stays 1200.
+	player2.global_position += Vector3(100.0, 0.0, 0.0)
+	await physics_frame
+	await physics_frame
+	_expect(player2.get("own_distance") == 1300,
+		"own distance should climb from the checkpoint")
+	_expect(player2.get("run_distance") == 1300,
+		"run distance should climb from the checkpoint")
+	await _clear_world(terrain2, player2, null)
+	Sentinel.done("distance_accumulates")
+
+
+# ---------------------------------------------------------------------------
+# CHECK 12 — lift landings survive a shell-less restore via the pending list
+# ---------------------------------------------------------------------------
+
+func _check_pending_lift_ids() -> void:
+	BestRunStore.clear_save_slot()
+	var terrain = await _make_terrain()
+	if terrain == null:
+		Sentinel.done("pending_lift_ids")
+		return
+	terrain.set_run_seed(ROUND_TRIP_SEED)
+	var writer = await _make_player()
+	var tower = await _make_tower_at(terrain.tower_site())
+	if writer == null or tower == null:
+		await _clear_world(terrain, writer, tower)
+		Sentinel.done("pending_lift_ids")
+		return
+	tower.call("mark_opened", ROUND_TRIP_LIFT)
+	writer.global_position = ROUND_TRIP_POS
+	writer.write_save()
+	var snap: Dictionary = SaveState.decode(BestRunStore.save_slot())
+	_expect(snap.get("lift", []) == [ROUND_TRIP_LIFT], "setup: the save should carry the lift")
+	await _clear_world(terrain, writer, tower)
+	# Restore with NO shell in the tree (a field position far from the tower):
+	# the landing must wait on the player, not die with the frame.
+	var terrain2 = await _make_terrain()
+	if terrain2 == null:
+		Sentinel.done("pending_lift_ids")
+		return
+	var player2 = await _make_player()
+	if player2 == null:
+		await _clear_world(terrain2, null, null)
+		Sentinel.done("pending_lift_ids")
+		return
+	_expect(await player2.continue_save(), "continue_save should accept the slot")
+	_expect(Array(player2.get("_pending_lift_ids")) == [ROUND_TRIP_LIFT],
+		"the landing should wait pending with no shell to take it")
+	var snap2: Dictionary = player2.save_snapshot()
+	_expect(snap2.get("lift", []) == [ROUND_TRIP_LIFT],
+		"the next snapshot must still carry the pending landing")
+	# A shell streams in: the pending ids seat `earned` on the first tick, and
+	# the snapshot keeps carrying them.
+	var tower2 = await _make_shell_at(terrain2.tower_site())
+	await physics_frame
+	await physics_frame
+	_expect(Array(tower2.call("earned_ids")).has(ROUND_TRIP_LIFT),
+		"the streamed shell should earn the pending landing")
+	_expect(Array(player2.get("_pending_lift_ids")).is_empty(),
+		"the pending list should drain into the shell")
+	var snap3: Dictionary = player2.save_snapshot()
+	_expect(snap3.get("lift", []) == [ROUND_TRIP_LIFT],
+		"the snapshot should carry the landing after the drain")
+	await _clear_world(terrain2, player2, tower2)
+	Sentinel.done("pending_lift_ids")
