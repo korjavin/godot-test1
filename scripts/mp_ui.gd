@@ -315,9 +315,30 @@ var _code_row: HBoxContainer = null
 ## The Sync / claim-code section (bead godot-test1-i8yu.6): the player id in
 ## groups of four with its own Copy, plus a paste field and "Use this code".
 ## Hidden when the scene has no player store to read or adopt into.
+##
+## Bead godot-test1-i8yu.7.2's auth rows live here too, below the claim rows
+## and only on web: the email row (caption + field + Send), the link-sent hint,
+## and the signed-in row ("Signed in as …" + Sign out). The claim rows hide
+## while signed in (parent decision 10) — with a session the code is no longer
+## the key, and showing it would invite pasting it on a second device, where
+## it would then reach only the stale anon record.
 var _claim_section: VBoxContainer = null
 var _claim_id_label: Label = null
 var _claim_input: LineEdit = null
+var _claim_caption: Label = null
+var _claim_row: HBoxContainer = null
+var _claim_use_row: HBoxContainer = null
+var _email_caption: Label = null
+var _email_row: HBoxContainer = null
+var _email_input: LineEdit = null
+var _mail_hint: Label = null
+var _signed_in_label: Label = null
+var _sign_out_button: Button = null
+## Not state, just the link-sent paint: set on `magic_link_sent(true, _)` and
+## cleared on any `session_changed` — the hint reads off this, never off the
+## field's typed-but-unsent text.
+var _auth_link_sent: bool = false
+
 
 ## Where a friend's invite code is typed, plus the Join button beside it.
 var _code_input: LineEdit = null
@@ -897,6 +918,7 @@ func _build_ui() -> void:
 
 	var your_code := Label.new()
 	your_code.name = "ClaimCaption"
+	_claim_caption = your_code
 	your_code.text = "Your code"
 	your_code.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	your_code.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
@@ -904,6 +926,8 @@ func _build_ui() -> void:
 	_claim_section.add_child(your_code)
 
 	var claim_row := HBoxContainer.new()
+	claim_row.name = "ClaimRow"
+	_claim_row = claim_row
 	claim_row.add_theme_constant_override("separation", 8)
 	claim_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_claim_section.add_child(claim_row)
@@ -928,6 +952,8 @@ func _build_ui() -> void:
 	claim_row.add_child(claim_copy)
 
 	var claim_use_row := HBoxContainer.new()
+	claim_use_row.name = "ClaimUseRow"
+	_claim_use_row = claim_use_row
 	claim_use_row.add_theme_constant_override("separation", 8)
 	claim_use_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_claim_section.add_child(claim_use_row)
@@ -947,6 +973,65 @@ func _build_ui() -> void:
 	var claim_use := _make_button("Use this code", _on_claim_use_pressed)
 	claim_use.size_flags_horizontal = Control.SIZE_SHRINK_END
 	claim_use_row.add_child(claim_use)
+
+	if BestRunStore.auth_available():
+		# THE AUTH ROWS (bead godot-test1-i8yu.7.2): the email sign-in, below the
+		# claim rows and only on web (`BestRunStore.auth_available()` — desktop
+		# keeps the claim code). Every row is built once and shown per state by
+		# `_paint_auth_rows()`, so a sign-in flips visibility, never structure.
+		_email_caption = Label.new()
+		_email_caption.name = "EmailCaption"
+		_email_caption.text = tr("Or sign in with your email")
+		_email_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_email_caption.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+		_email_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_claim_section.add_child(_email_caption)
+
+		_email_row = HBoxContainer.new()
+		_email_row.name = "EmailRow"
+		_email_row.add_theme_constant_override("separation", 8)
+		_email_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_claim_section.add_child(_email_row)
+
+		_email_input = LineEdit.new()
+		_email_input.name = "EmailInput"
+		_email_input.max_length = BestRunStore.MAX_EMAIL_LEN
+		_email_input.placeholder_text = tr("you@example.com")
+		_email_input.custom_minimum_size = Vector2(0.0, TOUCH_MIN_HEIGHT)
+		_email_input.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+		_email_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_style_line_edit(_email_input)
+		# Enter in the field is the same as pressing the button beside it — the Join
+		# row's convention, for the Join row's reason (a phone's "go" key).
+		_email_input.text_submitted.connect(func(_t: String) -> void: _on_send_link_pressed())
+		_email_row.add_child(_email_input)
+
+		var send_link := _make_button("Send link", _on_send_link_pressed)
+		send_link.name = "SendLink"
+		send_link.size_flags_horizontal = Control.SIZE_SHRINK_END
+		_email_row.add_child(send_link)
+
+		_mail_hint = Label.new()
+		_mail_hint.name = "MailHint"
+		_mail_hint.text = tr("Check your mail and open the link on THIS computer. It works once, for 15 minutes.")
+		_mail_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_mail_hint.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+		_mail_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_claim_section.add_child(_mail_hint)
+
+		_signed_in_label = Label.new()
+		_signed_in_label.name = "SignedInLabel"
+		_signed_in_label.text = ""
+		_signed_in_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_signed_in_label.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+		_signed_in_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_claim_section.add_child(_signed_in_label)
+
+		_sign_out_button = _make_button("Sign out", _on_sign_out_pressed)
+		_sign_out_button.name = "SignOut"
+		_sign_out_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+		_claim_section.add_child(_sign_out_button)
+
 
 	# --- Leave + Close ----------------------------------------------------
 	_leave_button = _make_button("Leave room", _on_leave_pressed)
@@ -1208,13 +1293,41 @@ static func _group_claim_code(id: String) -> String:
 	return grouped
 
 
+## The store for the auth rows, plus the one-time URL-token sniff: the emailed
+## link reopens the game with `?token=`, and this resolution point — where
+## `_claim_store()` is first reached for the auth UI — is where that token is
+## handed to the store. Sniffed once per session (a helper owns both, so neither
+## the paint below nor the Copy/Use handlers re-eval); adoption fetches, so the
+## records the token names merge in. Also connects the claim/auth repaint to
+## `save_loaded` once, guarded the card's way — a slot landing later repaints
+## instead of going stale — because the panel, unlike the card, is never
+## dismissed and needs no disconnect.
+## The store for the auth rows, plus its repaint wiring: `save_loaded` (like the
+## card — a slot landing later repaints instead of going stale) and the two
+## auth signals, each connected once and guarded the card's way. This
+## resolution point is where `_claim_store()` is first reached for the auth UI
+## — the store itself is never built here, so there is exactly one session
+## cache to sign into.
+func _resolve_auth_store() -> Node:
+	var store := _claim_store()
+	if store == null:
+		return null
+	if store.has_signal("save_loaded") and not store.save_loaded.is_connected(_refresh_claim):
+		store.save_loaded.connect(_refresh_claim)
+	if store.has_signal("session_changed") and not store.session_changed.is_connected(_on_session_changed):
+		store.session_changed.connect(_on_session_changed)
+	if store.has_signal("magic_link_sent") and not store.magic_link_sent.is_connected(_on_magic_link_sent):
+		store.magic_link_sent.connect(_on_magic_link_sent)
+	return store
+
+
 ## Repaint the claim-code section: hidden without a player store, otherwise the
 ## grouped id plus the one-line leak warning — anyone holding the code reads and
 ## overwrites the save, and only a new code undoes that. Re-run on every
 ## `_refresh()`, which is also where a live locale switch lands, so the tooltip
 ## re-resolves instead of freezing in the build language.
 func _refresh_claim() -> void:
-	var store := _claim_store()
+	var store := _resolve_auth_store()
 	if _claim_section != null:
 		_claim_section.visible = store != null
 	if store == null or _claim_id_label == null:
@@ -1222,6 +1335,40 @@ func _refresh_claim() -> void:
 	var id: String = String(store.call("player_id"))
 	_claim_id_label.text = _group_claim_code(id)
 	_claim_id_label.tooltip_text = tr("Anyone with this code can read and overwrite your save and raise your records — only a new code undoes that.")
+	_paint_auth_rows(store)
+
+
+## Paint the auth rows off the store's own session state: the claim rows hide
+## while signed in (parent decision 10), the email rows show only on web, and
+## the signed-in row reads "Signed in as …" off `session_email()` — never off
+## the field's typed-but-unsent text. The caption and placeholder re-resolve
+## here, so a live locale switch repaints them (placeholders don't
+## auto-translate).
+func _paint_auth_rows(store: Node) -> void:
+	var token: String = String(store.call("session_token")) if store.has_method("session_token") else ""
+	var email: String = String(store.call("session_email")) if store.has_method("session_email") else ""
+	var signed_in := not token.is_empty()
+	var on_web := BestRunStore.auth_available()
+	if _claim_caption != null:
+		_claim_caption.visible = not signed_in
+	if _claim_row != null:
+		_claim_row.visible = not signed_in
+	if _claim_use_row != null:
+		_claim_use_row.visible = not signed_in
+	if _email_caption != null:
+		_email_caption.visible = on_web and not signed_in
+		_email_caption.text = tr("Or sign in with your email")
+	if _email_row != null:
+		_email_row.visible = on_web and not signed_in
+	if _email_input != null:
+		_email_input.placeholder_text = tr("you@example.com")
+	if _mail_hint != null:
+		_mail_hint.visible = on_web and not signed_in and _auth_link_sent
+	if _signed_in_label != null:
+		_signed_in_label.visible = on_web and signed_in
+		_signed_in_label.text = tr("Signed in as %s") % email
+	if _sign_out_button != null:
+		_sign_out_button.visible = on_web and signed_in
 
 
 func _on_claim_copy_pressed() -> void:
@@ -1233,6 +1380,57 @@ func _on_claim_copy_pressed() -> void:
 		return
 	_copy_to_clipboard(id)
 	_on_status(tr("Copied %s to the clipboard") % _group_claim_code(id))
+
+
+func _on_send_link_pressed() -> void:
+	# Done typing — drop the caret so a phone's on-screen keyboard folds away,
+	# the Join handler's convention for the Join handler's reason. The email
+	# field's focus handling is the claim handler's: `text_submitted` sends,
+	# sending releases focus, and panel buttons are FOCUS_NONE (see
+	# `_make_button`), so no send leaks `ui_accept`/jump into gameplay.
+	if _email_input != null:
+		_email_input.release_focus()
+	var store := _claim_store()
+	if store == null or not store.has_method("request_magic_link"):
+		_on_status("Multiplayer is not available in this scene")
+		return
+	_on_status(tr("Sending…"))
+	store.call("request_magic_link", "" if _email_input == null else _email_input.text)
+
+
+func _on_sign_out_pressed() -> void:
+	var store := _claim_store()
+	if store == null or not store.has_method("sign_out"):
+		_on_status("Multiplayer is not available in this scene")
+		return
+	store.call("sign_out")
+
+
+## The session moved under us — a 401 that landed quietly, or our own sign-out
+## press. Repaint either way; a non-empty why speaks once on the status label,
+## where the player reads send outcomes too, while a deliberate sign-out (empty
+## why) still says it happened.
+func _on_session_changed(signed_in: bool, why: String) -> void:
+	_auth_link_sent = false
+	if not signed_in:
+		if why.is_empty():
+			_on_status(tr("Signed out"))
+		else:
+			_on_status(why)
+	_refresh_claim()
+
+
+## The link request answered. Sent means the link-sent state (the hint IS the
+## confirmation); refused means the reason on the status label, staying where
+## we were — a resend is just pressing again.
+func _on_magic_link_sent(ok: bool, why: String) -> void:
+	if ok:
+		_auth_link_sent = true
+		if _email_input != null:
+			_email_input.text = ""
+	else:
+		_on_status(why)
+	_refresh_claim()
 
 
 func _on_claim_use_pressed() -> void:

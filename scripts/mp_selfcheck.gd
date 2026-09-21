@@ -81,6 +81,7 @@ const MPManager: GDScript = preload("res://scripts/mp_manager.gd")
 ## Script method and not something a class name resolves to.
 const MP_CODEC: GDScript = preload("res://scripts/mp_codec.gd")
 const Terrain: GDScript = preload("res://scripts/endless_terrain.gd")
+const MultiplayerUI: GDScript = preload("res://scripts/mp_ui.gd")
 const Coin: GDScript = preload("res://scripts/coin.gd")
 const Player: GDScript = preload("res://scripts/player_controller.gd")
 const CrocAI: GDScript = preload("res://scripts/piglet_crocodile_ai.gd")
@@ -139,6 +140,12 @@ func _run_checks() -> String:
 	if not failure.is_empty():
 		return failure
 	failure = _check_claim_base_value()
+	if not failure.is_empty():
+		return failure
+	failure = await _check_magic_link_panel()
+	if not failure.is_empty():
+		return failure
+	failure = await _check_magic_link_panel_off_web()
 	if not failure.is_empty():
 		return failure
 	failure = _check_terrain_focus_points()
@@ -1181,6 +1188,177 @@ func _check_confirm_base_is_unforgeable() -> String:
 # =============================================================================
 # 18. TERRAIN FOCUS POINTS (bead godot-test1-s86.14)
 # =============================================================================
+
+class MagicStubPlayer extends Node:
+	## A stand-in player carrying a real save store: the panel finds its store
+	## by group plus property, the same seam the claim rows use.
+	var best_run_store: BestRunStore = null
+	func _ready() -> void:
+		add_to_group("player")
+
+
+## A save store whose link-request transport is a recorder, not a POST: the
+## real `request_magic_link()` still validates and persists the address, but
+## instead of sending, the stub records and emits the forced reply — so the
+## probe drives the panel's send path with a refused address, a sent link and
+## a rate-limited refusal without the network deciding anything.
+class MagicStubStore extends BestRunStore:
+	var sent_address: String = ""
+	var sent_count: int = 0
+	var forced_ok: bool = true
+	var forced_why: String = ""
+	func _request_magic_link() -> void:
+		sent_count += 1
+		sent_address = _session_email
+		magic_link_sent.emit(forced_ok, forced_why)
+
+
+func _check_magic_link_panel() -> String:
+	"""
+	The Sync section's email sign-in, in its three states: signed out (caption
+	+ field + Send), link sent (the check-your-mail hint), signed in ("Signed
+	in as …" + Sign out, claim rows hidden) — and back, with the claim rows
+	restored. Off-web (the override at 0) the email rows are never built and
+	the claim rows stay.
+
+	A typo'd address speaks the refusal on the status label and sends nothing;
+	a good one records the address and raises the hint; a forced refusal
+	surfaces the server's own text; adopting signs in and hides ClaimId with
+	ClaimInput; signing out brings them back.
+
+	NON-VACUOUS by named mutation: the status painted off anything but the
+	session echoes wrong (M1 is the store's); the claim rows kept visible
+	while signed in fail the hidden pin (M5); the shape rule skipped sends the
+	typo (M4, via the recorded count); the override ignored builds EmailInput
+	at 0 and hides it at 1 (the control). Hermetic: the stub lobby while the
+	panel lives, the override restored after.
+	"""
+	var restore_url: String = BestRunStore.lobby_url_override
+	BestRunStore.lobby_url_override = "http://127.0.0.1:9"
+	var restore_override: int = BestRunStore.auth_available_override
+	BestRunStore.auth_available_override = 1
+	var stub := MagicStubPlayer.new()
+	var store := MagicStubStore.new()
+	stub.best_run_store = store
+	root.add_child(stub)
+	root.add_child(store)
+	var panel: Control = MultiplayerUI.new()
+	root.add_child(panel)
+	await process_frame
+	# The panel builds closed (the N toggle owns that, pause and all); the paint
+	# under test is the ROWS', so show the body directly — `is_visible_in_tree()`
+	# pins what the player sees. The toggle path itself is pause_selfcheck's
+	# subject, which builds this same panel.
+	panel.find_child("MPPanel", true, false).visible = true
+	var failure: String = await _drive_magic_link_panel(panel, store)
+	BestRunStore.auth_available_override = restore_override
+	BestRunStore.lobby_url_override = restore_url
+	panel.free()
+	stub.free()
+	store.free()
+	if failure.is_empty():
+		Sentinel.done("magic_link_panel")
+	return failure
+
+
+func _drive_magic_link_panel(panel: Control, store: MagicStubStore) -> String:
+	var field := panel.find_child("EmailInput", true, false) as LineEdit
+	var send := panel.find_child("SendLink", true, false) as Button
+	var heard := panel.get("_status_label") as Label
+	if field == null or send == null or heard == null:
+		return "the Sync section has no email field, Send button or status label"
+	panel._refresh_claim()
+	var hint := panel.find_child("MailHint", true, false) as Label
+	var signed_row := panel.find_child("SignedInLabel", true, false) as Label
+	var claim_id := panel.find_child("ClaimId", true, false) as Label
+	var claim_input := panel.find_child("ClaimInput", true, false) as LineEdit
+	if hint == null or signed_row == null or claim_id == null or claim_input == null:
+		return "the Sync section is missing a state row or a claim row"
+	if hint.is_visible_in_tree() or signed_row.is_visible_in_tree():
+		return "signed out should show neither the mail hint nor the signed-in row"
+	if not claim_id.is_visible_in_tree() or not claim_input.is_visible_in_tree():
+		return "signed out should show the claim rows"
+	# A typo speaks on the status label and sends nothing.
+	field.text = "not-an-email"
+	panel._on_send_link_pressed()
+	if store.sent_count != 0:
+		return "a refused address started a link request (M4)"
+	if heard.text != "That does not look like an email address":
+		return "a refused address should say why, heard %s" % heard.text
+	# A good address records and raises the link-sent hint.
+	field.text = "pilot@example.com"
+	panel._on_send_link_pressed()
+	if store.sent_address != "pilot@example.com" or store.sent_count != 1:
+		return "a good address was not recorded and sent once: %s x %d" % [store.sent_address, store.sent_count]
+	if field.text != "":
+		return "a sent link should clear the field"
+	if not hint.is_visible_in_tree():
+		return "after a sent link the check-your-mail hint should show"
+	# A forced refusal surfaces the server's own text and sends again.
+	store.forced_ok = false
+	store.forced_why = "Too many sign-in links — try again in 3 minutes"
+	field.text = "pilot@example.com"
+	panel._on_send_link_pressed()
+	if store.sent_count != 2:
+		return "a resend is just pressing again — wanted a second send, got %d" % store.sent_count
+	if heard.text != "Too many sign-in links — try again in 3 minutes":
+		return "a refused send should surface the server text, heard %s" % heard.text
+	store.forced_ok = true
+	# Adopting signs in: the address shows, the claim rows hide.
+	if not store.adopt_session("ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12"):
+		return "setup: adoption refused — the signed-in half proves nothing"
+	if signed_row.text != "Signed in as pilot@example.com":
+		return "a held session should read Signed in as the address, got %s" % signed_row.text
+	if not signed_row.is_visible_in_tree():
+		return "the signed-in row should show while signed in"
+	if hint.is_visible_in_tree():
+		return "the mail hint should retire once signed in"
+	if claim_id.is_visible_in_tree() or claim_input.is_visible_in_tree():
+		return "the claim rows should hide while signed in (M5)"
+	# Signing out brings the claim rows back and retires the row.
+	store.sign_out()
+	if signed_row.is_visible_in_tree():
+		return "the signed-in row should retire after sign-out"
+	if not claim_id.is_visible_in_tree() or not claim_input.is_visible_in_tree():
+		return "the claim rows should return after sign-out"
+	if heard.text != "Signed out":
+		return "a deliberate sign-out should say so, heard %s" % heard.text
+	return ""
+
+
+func _check_magic_link_panel_off_web() -> String:
+	"""
+	The control: with the override at 0 no EmailInput node is built at all
+	and the claim rows stay visible. A second panel instance, because rows are
+	built once at build time.
+	"""
+	var restore_override: int = BestRunStore.auth_available_override
+	BestRunStore.auth_available_override = 0
+	var stub := MagicStubPlayer.new()
+	var store := MagicStubStore.new()
+	stub.best_run_store = store
+	root.add_child(stub)
+	root.add_child(store)
+	var panel: Control = MultiplayerUI.new()
+	root.add_child(panel)
+	await process_frame
+	panel.find_child("MPPanel", true, false).visible = true
+	var failure := ""
+	if panel.find_child("EmailInput", true, false) != null:
+		failure = "off-web the panel built an EmailInput anyway — the override is ignored (M7)"
+	else:
+		panel._refresh_claim()
+		var claim_id := panel.find_child("ClaimId", true, false) as Label
+		if claim_id == null or not claim_id.is_visible_in_tree():
+			failure = "off-web the claim rows should stay visible"
+	BestRunStore.auth_available_override = restore_override
+	panel.free()
+	stub.free()
+	store.free()
+	if failure.is_empty():
+		Sentinel.done("magic_link_panel_off_web")
+	return failure
+
 
 func _check_terrain_focus_points() -> String:
 	"""
