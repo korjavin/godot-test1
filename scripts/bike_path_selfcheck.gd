@@ -256,6 +256,16 @@ extends SceneTree
 const Sentinel := preload("res://scripts/selfcheck_sentinel.gd")
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
+const PLAYER_SCENE: String = "res://scenes/player.tscn"
+const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
+
+
+class CaptionStub extends Node:
+	"""Records world_caption posts: the fine must SAY WHY, on screen."""
+	var posts: Array = []
+	func post_caption(msg: String, _duration: float = 3.0) -> bool:
+		posts.append(msg)
+		return true
 ## Check 1 builds real chunks, and a real chunk spawns real predators.
 const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 
@@ -436,6 +446,12 @@ const TEXT_RULES: Array[Array] = [
 		"create_box stores its colour already linearised (chunk_batch.gd's COLOUR SPACE "
 		+ "paragraph), so a raw Color written into the MultiMesh renders one lamp "
 		+ "brighter than every other box in the world, on desktop and on web"],
+	["_plant_signal_timers", "Timer.new()", true,
+		"a head is a Timer tick and never a per-frame writer: set_instance_color "
+		+ "dirties the whole CUBE bucket, so the cycle keeps one Timer per head. "
+		+ "A rewrite that deleted the plant fails here; one that kept the plant "
+		+ "and ADDED a per-frame writer does not, and is named as a survivor in "
+		+ "the bead's PR"],
 ]
 
 ## How far two colours may differ and still count as the same. A float-comparison
@@ -658,6 +674,9 @@ func _run() -> void:
 	_check_rack_clearance(terrain_script)
 	_check_parked_bikes(terrain_script)
 	_check_parked_bike_census_control(terrain_script)
+	# --- BEAD `godot-test1-7ami`, the red-light fine: F (the legs on a real
+	# head, a real Timer and a real rider). Keep that list true.
+	_check_red_light_fine(terrain_script)
 	# --- CHILD `.3`, the bridges. SIX STATEMENTS IN FOUR CALLS: B1 (with B1b), B3
 	# and B4 are one call because they all need the same drawn deck, B5 and B6 are
 	# the two unit assertions on the pieces no seed reliably exercises, and B2 (with
@@ -701,7 +720,10 @@ func _run() -> void:
 				+ "footprint and slice, byte-identical across builds, the pre-bike "
 				+ "boxes pinned to their consts on three seeds, every mile "
 				+ "monument passing the gates grows its side-link onto the nearest "
-				+ "trunk station to the bit and paints no piece under 40 m")
+				+ "trunk station to the bit and paints no piece under 40 m, and riding "
+			+ "through a lit red costs exactly one coined caption — never on green "
+			+ "or amber, never on foot, never twice without a re-arm, never below "
+			+ "zero, never off the paint")
 		Sentinel.finish(self)
 		return
 	for failure: String in _failures:
@@ -6140,3 +6162,270 @@ func _check_parked_bike_census_control(terrain_script: GDScript) -> void:
 	print("C: %d pre-bike boxes at %d racks stand on their const-derived centres over %d seeds"
 		% [prebike, racks, SEEDS.size()])
 	Sentinel.done("parked_bike_census_control")
+
+
+# ============================================================================
+# CHECK 12 — the red-light fine (bead godot-test1-7ami)
+# ============================================================================
+
+func _check_red_light_fine(terrain_script: GDScript) -> void:
+	"""
+	Riding through a lit RED costs exactly one coin, and only that.
+
+	The rig is the shipped one end to end: a REAL chunk through `create_chunk`
+	with a REAL head, its REAL cycle Timer, and a REAL `player.tscn` rider —
+	so the group walk, the marker transform, the stop-line metas and the Timer
+	metas are all the production paths, not fixtures of them. The ONLY staged
+	inputs are the Timer's phase meta (forced per leg, no tick — the test drives
+	what the rider READS) and the rider's feet. Every leg is synchronous between
+	two frames, so no live tick can bill, move or grace anybody mid-leg.
+
+	Legs: RED fines exactly 1 with the caption; GREEN does not; AMBER does not;
+	a walker on RED does not; a second crossing without re-arm does not, while
+	leaving past 6 m re-arms and fines again; at zero coins nothing goes
+	negative and the caption still shows; two metres off the paint never fines.
+	The CONTROL pins the meaning of the table both sides read: phase 2 lights
+	lens 0 (red) and phase 0 lights lens 2 (green) — a mutation that inverts
+	SIGNAL_LIT flips this probe. So does removing the fine, charging amber, or
+	charging the walker.
+	"""
+	var terrain: Node3D = _terrain(terrain_script, SEEDS[0], true)
+	var timer: Timer = null
+	var marker: Node3D = null
+	for ox in range(-SWEEP_HALF, SWEEP_HALF + 1):
+		if timer != null:
+			break
+		for oy in range(-SWEEP_HALF, SWEEP_HALF + 1):
+			var pos := Vector2i(ox, oy)
+			terrain.create_chunk(pos)
+			if not (terrain.get("active_chunks") as Dictionary).has(pos):
+				continue
+			var chunk_node: Node = (terrain.get("active_chunks") as Dictionary)[pos]
+			for m: Node in _markers(chunk_node):
+				var heads: Array = _head_timers(m)
+				if heads.is_empty():
+					continue
+				timer = heads[0]
+				marker = m as Node3D
+				break
+	if timer == null or marker == null:
+		_fail("check 12 swept %dx%d chunks and found no traffic head with a cycle "
+			% [SWEEP_HALF * 2 + 1, SWEEP_HALF * 2 + 1] + "Timer, so the red-light "
+			+ "fine never fired")
+		terrain.free()
+		Sentinel.done("red_light_fine")
+		return
+	var head: int = int(timer.get_meta("head", -1))
+	var stops: Array = marker.get_meta("signal_stops", [])
+	if head < 0 or head >= stops.size():
+		_fail("check 12's Timer carries head %d for %d stop records — the "
+			% [head, stops.size()] + "rider cannot tell which stop line this lamp serves")
+		terrain.free()
+		Sentinel.done("red_light_fine")
+		return
+	# THE CONTROL ON THE MEANING. Both sides read the lit lamp through
+	# SIGNAL_LIT off the Timer's phase meta: phase 2 is the red lens (index 0,
+	# top of the stack) and phase 0 the green one (index 2). Invert the table
+	# and this fails before a single coin moves.
+	if BikePaths.SIGNAL_LIT[2] != 0 or BikePaths.SIGNAL_LIT[0] != 2:
+		_fail("SIGNAL_LIT no longer lights lens 0 on phase 2 and lens 2 on phase 0 "
+			+ "(%s) — the stack is built top-down red, amber, green, and the fine "
+			% str(BikePaths.SIGNAL_LIT) + "and the cycle have to agree about which is which")
+	if BikePaths.signal_dwell(0) != 8.0 or BikePaths.signal_dwell(1) != 2.0 \
+			or BikePaths.signal_dwell(2) != 8.0:
+		_fail("the signal rhythm is no longer green ~8, amber ~2, red ~8 — the "
+			+ "readability STEP 0 measured this bead against")
+	# THE SECOND HEAD. No two-head marker exists in the probe's sweep, so the
+	# renamed-Timer leg stages one: a second Timer planted exactly the way
+	# `_plant_signal_timers` plants them — the same name, so the engine performs
+	# the real rename. Its stop record copies this marker's own line 50 m aside
+	# (past every re-arm distance), so the staged head can never double-bill a
+	# leg driving the real line and vice versa: the crossing math is the main
+	# legs' business, and this leg proves only the walk — metadata finds the
+	# renamed head where a name match would silently drop it.
+	var multi_timer := Timer.new()
+	multi_timer.name = BikePaths.SIGNAL_TIMER_NAME
+	multi_timer.set_meta("lamp0", int(timer.get_meta("lamp0")))
+	multi_timer.set_meta("head", 1)
+	multi_timer.set_meta("phase", 2)
+	multi_timer.set_meta("shown", true)
+	marker.add_child(multi_timer)
+	var multi_stops: Array = (marker.get_meta("signal_stops", []) as Array).duplicate()
+	var staged: Dictionary = (multi_stops[0] as Dictionary).duplicate()
+	staged["s"] = (staged["s"] as Vector2) + Vector2(50.0, 50.0)
+	multi_stops.append(staged)
+	marker.set_meta("signal_stops", multi_stops)
+	# THE RESTART. Driving the timeout must advance the phase AND restart the
+	# countdown on the new phase's own dwell: assigning `wait_time` inside the
+	# callback lands a cycle late (amber would hold 8 s, red 2 s). `time_left`
+	# is the pin — right after the emit no frame has passed, so it reads the
+	# fresh countdown exactly.
+	var ph0: int = int(timer.get_meta("phase", 0))
+	timer.timeout.emit()
+	var ph1: int = int(timer.get_meta("phase", -1))
+	if ph1 != (ph0 + 1) % 3:
+		_fail("driving the cycle timeout did not advance the phase — the rider "
+			+ "and the lamps are reading different clocks")
+	if absf(timer.time_left - BikePaths.signal_dwell(ph1)) > 0.05:
+		_fail("the tick did not restart the countdown on the new phase's dwell "
+			+ "(time_left %.2f, dwell %.2f) — assigning wait_time lands a cycle "
+			% [timer.time_left, BikePaths.signal_dwell(ph1)] + "late and the "
+			+ "steady-state rhythm comes out swapped")
+	# THE WIRING. The legs below drive the shipped tick directly, so a cut STEP
+	# 9.5 hook would still pass them and the fine would be dead in the game.
+	# The riding step must call the tick: check 10b's textual shape, failing by
+	# name if the step is renamed away.
+	var pc: String = FileAccess.get_file_as_string(PLAYER_SCRIPT)
+	if pc.is_empty():
+		_fail("could not read %s as text — check 12 cannot pin the riding step" % PLAYER_SCRIPT)
+	elif not _function_body(pc, "_physics_process").contains("_tick_red_light_fine()"):
+		_fail("the riding step no longer calls _tick_red_light_fine() — the fine "
+			+ "is unwired and no rider in the game can pay it")
+	var stop: Dictionary = stops[head]
+	var xf: Transform3D = marker.global_transform
+	var sw3: Vector3 = xf * Vector3((stop["s"] as Vector2).x, 0.0, (stop["s"] as Vector2).y)
+	var dw3: Vector3 = xf.basis * Vector3((stop["dir"] as Vector2).x, 0.0, (stop["dir"] as Vector2).y)
+	var sw := Vector2(sw3.x, sw3.z)
+	var dw := Vector2(dw3.x, dw3.z).normalized()
+	var perp := Vector2(-dw.y, dw.x)
+
+	var packed: PackedScene = load(PLAYER_SCENE)
+	var rider: Node = packed.instantiate()
+	root.add_child(rider)
+	await process_frame
+	# Whatever the building landed during staging is undone the way
+	# capture_selfcheck's harness does: the legs measure the fine, not grace.
+	rider.set("is_caught", false)
+	rider.set("is_respawning", false)
+	rider.set("respawn_timer", 0.0)
+	rider.set("respawn_blink_timer", 0.0)
+	var caption := CaptionStub.new()
+	root.add_child(caption)
+	caption.add_to_group("world_caption")
+
+	# All legs below run with no frame between them: the rider is placed, the
+	# shipped tick is driven directly, and the coins and the caption are read.
+	# No live physics tick can bill or move anybody in between.
+	var cross := func(phase: int, riding: bool, lateral: float) -> void:
+		timer.set_meta("phase", phase)
+		rider.set("is_riding", riding)
+		rider.set("own_coins", _fine_coins[0])
+		rider.set("coins_collected", _fine_coins[1])
+		var behind := Vector3(sw.x - dw.x * 3.0 + perp.x * lateral, 1.0,
+			sw.y - dw.y * 3.0 + perp.y * lateral)
+		(rider as Node3D).global_position = behind
+		rider.call("_tick_red_light_fine")
+		var ahead := Vector3(sw.x + dw.x * 1.0 + perp.x * lateral, 1.0,
+			sw.y + dw.y * 1.0 + perp.y * lateral)
+		(rider as Node3D).global_position = ahead
+		rider.call("_tick_red_light_fine")
+		_fine_coins = [int(rider.get("own_coins")), int(rider.get("coins_collected"))]
+
+	_fine_coins = [10, 10]
+	# RED: fines exactly one coin with the caption, and snapshots the peak.
+	rider.set("record_coins", 0)
+	cross.call(2, true, 0.0)
+	_rdata("red fines one", _fine_coins[0] == 9 and _fine_coins[1] == 9)
+	_rdata("red snapshots the peak", int(rider.get("record_coins")) == 10)
+	_rdata("red says why", caption.posts.size() == 1
+		and String(caption.posts[0]) == "Ran a red light: -1 coin")
+	# A second crossing with no re-arm pays nothing...
+	_fine_coins = [9, 9]
+	cross.call(2, true, 0.0)
+	_rdata("second crossing without re-arm is free", _fine_coins[0] == 9
+		and caption.posts.size() == 1)
+	# ...while leaving past the re-arm distance opens a new pass.
+	rider.set("is_riding", true)
+	timer.set_meta("phase", 2)
+	(rider as Node3D).global_position = Vector3(sw.x - dw.x * 10.0, 1.0, sw.y - dw.y * 10.0)
+	rider.call("_tick_red_light_fine")
+	_fine_coins = [9, 9]
+	cross.call(2, true, 0.0)
+	_rdata("past 6 m re-arms", _fine_coins[0] == 8 and caption.posts.size() == 2)
+	# GREEN and AMBER are free.
+	_fine_coins = [8, 8]
+	cross.call(0, true, 0.0)
+	_rdata("green is free", _fine_coins[0] == 8 and caption.posts.size() == 2)
+	cross.call(1, true, 0.0)
+	_rdata("amber is free", _fine_coins[0] == 8 and caption.posts.size() == 2)
+	# A walker on RED pays nothing.
+	_fine_coins = [8, 8]
+	cross.call(2, false, 0.0)
+	_rdata("a walker is never fined", _fine_coins[0] == 8 and caption.posts.size() == 2)
+	# At zero coins nothing goes negative and the caption still shows.
+	_fine_coins = [0, 0]
+	rider.set("record_coins", 0)
+	cross.call(2, true, 0.0)
+	_rdata("zero coins never go negative", _fine_coins[0] == 0 and _fine_coins[1] == 0)
+	_rdata("zero coins still say why", caption.posts.size() == 3)
+	# Two metres off the paint is not running anything.
+	_fine_coins = [10, 10]
+	cross.call(2, true, 2.0)
+	_rdata("off the strip is free", _fine_coins[0] == 10 and caption.posts.size() == 3)
+	# A renamed Timer still fines: the staged second head carries the planted
+	# name the engine renamed on add, and the rider finds it by metadata.
+	if String(multi_timer.name) == BikePaths.SIGNAL_TIMER_NAME:
+		_fail("the staged second Timer kept the planted name — the engine did "
+			+ "not rename it and the leg below proves nothing about renamed heads")
+	var mstops: Array = marker.get_meta("signal_stops", [])
+	var msw := Vector2.ZERO
+	var mdw := Vector2.RIGHT
+	var mhi: int = int(multi_timer.get_meta("head", -1))
+	if mhi < 0 or mhi >= mstops.size():
+		_fail("the staged Timer carries head %d for %d stop records" % [mhi, mstops.size()])
+	else:
+		var mxf: Transform3D = marker.global_transform
+		var mstop: Dictionary = mstops[mhi]
+		var msw3: Vector3 = mxf * Vector3((mstop["s"] as Vector2).x, 0.0, (mstop["s"] as Vector2).y)
+		var mdw3: Vector3 = mxf.basis * Vector3((mstop["dir"] as Vector2).x, 0.0, (mstop["dir"] as Vector2).y)
+		msw = Vector2(msw3.x, msw3.z)
+		mdw = Vector2(mdw3.x, mdw3.z).normalized()
+		var before: int = caption.posts.size()
+		rider.set("is_riding", true)
+		rider.set("own_coins", 10)
+		rider.set("coins_collected", 10)
+		(rider as Node3D).global_position = Vector3(msw.x - mdw.x * 3.0, 1.0, msw.y - mdw.y * 3.0)
+		rider.call("_tick_red_light_fine")
+		(rider as Node3D).global_position = Vector3(msw.x + mdw.x * 1.0, 1.0, msw.y + mdw.y * 1.0)
+		rider.call("_tick_red_light_fine")
+		_rdata("a renamed head fines on red", int(rider.get("own_coins")) == 9
+			and caption.posts.size() == before + 1)
+	# An unshown head never fines: fresh chunks show all-dim until the first
+	# tick writes the phase, and there is no red to run.
+	var keep: int = caption.posts.size()
+	_fine_coins = [10, 10]
+	timer.set_meta("shown", false)
+	cross.call(2, true, 0.0)
+	_rdata("an unshown head is free", _fine_coins[0] == 10 and caption.posts.size() == keep)
+
+	# FREED, NOT QUEUED, AND OUT OF THE PLAYER GROUP FIRST: a queued rider is
+	# still in group "player" across the frames check 11 awaits below, and a
+	# fresh terrain that finds a player streams — rebuilding the very chunk
+	# whose unload that check is measuring.
+	rider.remove_from_group("player")
+	caption.remove_from_group("world_caption")
+	caption.free()
+	rider.free()
+	terrain.free()
+	Sentinel.done("red_light_fine")
+
+
+func _head_timers(m: Node) -> Array:
+	"""The marker's cycle Timers in plant order, by metadata — never by node
+	name: Godot auto-renames every same-named sibling past the first, so a
+	name walk finds head 0 and silently drops the rest."""
+	var out: Array = []
+	for t: Node in m.get_children():
+		if (t is Timer) and t.has_meta("head"):
+			out.append(t)
+	out.sort_custom(func(a: Node, b: Node) -> bool: return int(a.get_meta("head")) < int(b.get_meta("head")))
+	return out
+
+
+var _fine_coins: Array = [10, 10]
+
+
+func _rdata(name: String, cond: bool) -> void:
+	"""One leg of check 12: name the direction, not the count."""
+	if not cond:
+		_fail("red-light fine: %s" % name)

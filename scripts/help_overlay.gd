@@ -153,6 +153,9 @@ const ROWS: Array = [
 	# The rental bike (bead godot-test1-z2yv.7, folding z2yv.10 in): X, beside
 	# WASD under the left hand — and not Y/Z, which swap on German QWERTZ boards.
 	["X", "Rent a bike at a rack (2 coins).", Mode.DESKTOP],
+	# The red-light fine (bead godot-test1-7ami): no key — a rule, not an
+	# action — so the "Circle" precedent names the thing instead of a key.
+	["Red light", "-1 coin for riding through red.", Mode.DESKTOP],
 
 
 

@@ -459,6 +459,8 @@ Offline,Offline,Nicht verbunden
 "Stand on a found circle to travel.","Stand on a found circle to travel.","Stell dich zum Reisen auf einen gefundenen Kreis."
 "That circle is not found yet.","That circle is not found yet.","Dieser Kreis ist noch nicht gefunden."
 "You are already at that circle.","You are already at that circle.","Du bist schon an diesem Kreis."
+"Ran a red light: -1 coin","Ran a red light: -1 coin","Bei Rot gefahren: -1 Münze."
+"-1 coin for riding through red.","-1 coin for riding through red.","-1 Münze bei Rot."
 "Or sign in with your email","Or sign in with your email","Oder mit E-Mail anmelden"
 "you@example.com","you@example.com","du@beispiel.de"
 "Send link","Send link","Link senden"

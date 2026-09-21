@@ -1744,6 +1744,8 @@ func _physics_process(delta: float) -> void:
 		if bike_range_left <= 0.0:
 			dismount_bike()
 			_say_bike_done()
+	if is_riding:
+		_tick_red_light_fine()
 	if is_riding and _sheltered():
 		# No bike on the HQ ramps: under the roof the ride ends, silently — the
 		# building already announces itself.
@@ -2560,6 +2562,105 @@ func _pay_coin_setback(fraction: float) -> bool:
 # `capture_selfcheck` check 1 asserts the roster moves on a FRESH profile with the
 # gate-restored mutation as its control, so re-adding the read is a red build and
 # not a silent regression.
+
+
+func _tick_red_light_fine() -> void:
+	"""
+	Fine the rider for crossing a signal head's stop line on RED, once per head
+	per pass (bead `godot-test1-7ami`).
+
+	The stop line is the plane through the head's strip point, perpendicular to
+	the path's local direction there, and the crossing only counts inside the
+	painted strip's half-width — a rider threading past the post off the paint
+	is not running anything. Only the path's FORWARD direction fines (against
+	the segment's own arrow): the lamps face the riders coming up the strip,
+	and a rider rolling back over the line they just crossed is not a second
+	offence. Amber is free, walkers are never fined (this runs only while
+	`is_riding`), and a head stays spent until the rider is
+	`RED_LIGHT_REARM_METRES` away again or the lamp turns green.
+
+	PER-PEER AMBIENCE, and the fine is local to what THIS screen shows: the lit
+	lamp is this peer's own Timer meta, read through `BikePaths.SIGNAL_LIT`
+	right where the cycle writes it — never a second clock, never the seed,
+	never the wire. Each verb's ceilings are written at its send site, and this
+	one sends nothing.
+	"""
+	if not is_riding:
+		return
+	var here := Vector2(global_position.x, global_position.z)
+	var half: float = BikePaths.BIKE_PATH_WIDTH * 0.5
+	for marker: Node in get_tree().get_nodes_in_group(BikePaths.BIKE_SIGNAL_GROUP):
+		if not (marker is Node3D):
+			continue
+		var m3d := marker as Node3D
+		var stops: Array = m3d.get_meta("signal_stops", [])
+		if stops.is_empty():
+			continue
+		for timer: Node in m3d.get_children():
+			if not (timer is Timer):
+				continue
+			# By metadata, never by node name: every head's Timer is planted
+			# under the same name and Godot auto-renames each sibling past the
+			# first, so an exact-name filter would skip those heads forever.
+			# A fresh head is all-dim until its first tick writes the phase,
+			# so unshown heads are skipped too — no fine for a red nobody sees.
+			if not timer.has_meta("head"):
+				continue
+			if not bool(timer.get_meta("shown", false)):
+				continue
+			var hi: int = int(timer.get_meta("head"))
+			if hi < 0 or hi >= stops.size():
+				continue
+			var stop: Dictionary = stops[hi]
+			var sl: Vector2 = stop["s"]
+			var dl: Vector2 = stop["dir"]
+			var xf: Transform3D = m3d.global_transform
+			var sw3: Vector3 = xf * Vector3(sl.x, 0.0, sl.y)
+			var dw3: Vector3 = xf.basis * Vector3(dl.x, 0.0, dl.y)
+			var sw := Vector2(sw3.x, sw3.z)
+			var dw := Vector2(dw3.x, dw3.z).normalized()
+			var rel: Vector2 = here - sw
+			var dist: float = rel.length()
+			# THE LIT LAMP, through the SAME table the cycle writes: phase 2
+			# lights lamp 0, the red lens. A mutation that inverts SIGNAL_LIT
+			# moves the fine with it, which is what the check's control proves.
+			var lit: int = BikePaths.SIGNAL_LIT[
+				posmod(int(timer.get_meta("phase", 0)), 3)]
+			if dist > RED_LIGHT_REARM_METRES or lit == 2:
+				_redlight_prev.erase(timer)
+				continue
+			var along: float = rel.x * dw.x + rel.y * dw.y
+			if (rel - dw * along).length() > half:
+				_redlight_prev.erase(timer)
+				continue
+			var seen: Array = _redlight_prev.get(timer, [along, false])
+			var prev: float = float(seen[0])
+			var spent: bool = bool(seen[1])
+			if not spent and prev < 0.0 and along >= 0.0 and lit == 0:
+				_bill_red_light_fine()
+				_redlight_prev[timer] = [along, true]
+			else:
+				_redlight_prev[timer] = [along, spent]
+	for key: Variant in _redlight_prev.keys():
+		if not is_instance_valid(key):
+			_redlight_prev.erase(key)
+
+
+func _bill_red_light_fine() -> void:
+	"""
+	Bill the red-light fine: `RED_LIGHT_FINE_COINS` off the run's own stake,
+	exactly the way the bite tax does it (`record_coins` snapshotted first, the
+	displayed figures clamped at zero), and the caption that says why — every
+	penalty SAYS WHY (owner ruling). At zero coins the figures stay at zero and
+	the caption still shows. Lifetime totals are never touched: persistence is
+	monotone, so the fine is a run-side tax like the bite.
+	"""
+	record_coins = maxi(record_coins, own_coins)
+	own_coins = maxi(0, own_coins - RED_LIGHT_FINE_COINS)
+	coins_collected = maxi(0, coins_collected - RED_LIGHT_FINE_COINS)
+	var caption := get_tree().get_first_node_in_group("world_caption")
+	if caption != null and caption.has_method("post_caption"):
+		caption.call("post_caption", tr("Ran a red light: -1 coin"))
 
 
 func preload_all_characters() -> void:
@@ -4837,6 +4938,12 @@ const BIKE_RANGE_METRES: float = 5000.0
 ## plus a step).
 const BIKE_MOUNT_REACH: float = 2.5
 
+## THE RED-LIGHT FINE (bead `godot-test1-7ami`, owner 2026-09-20): riding through
+## a lit RED costs one coin. Once per head per pass — a fined head stays spent
+## until the rider is this far away again or the lamp turns green.
+const RED_LIGHT_FINE_COINS: int = 1
+const RED_LIGHT_REARM_METRES: float = 6.0
+
 
 ## Per-character cooldown timers (seconds remaining; 0 = ready). Sized in _ready().
 var ability_cooldowns: Array[float] = []
@@ -4861,6 +4968,12 @@ var bike_range_left: float = 0.0
 ## budget burns the horizontal metres between then and now — actual displacement,
 ## so standing still burns nothing and a hop burns its length.
 var _ride_last_pos: Vector3 = Vector3.ZERO
+
+## Red-light stop lines in progress (bead `godot-test1-7ami`): the head's Timer
+## node to `[along, spent]` — which side of its stop line the rider was last on,
+## and whether this pass already paid. Cleared on every dismount with the rest
+## of the transient ride state, so nothing survives the ride it measured.
+var _redlight_prev: Dictionary = {}
 
 ## Seconds left on an Adrenaline speed burst (0 = none running). THE ONE ACTIVE
 ## SKILL WITH NO KEY: it is triggered by a passive event (crossing a streak step
@@ -5313,6 +5426,7 @@ func dismount_bike() -> void:
 	"""
 	is_riding = false
 	bike_range_left = 0.0
+	_redlight_prev.clear()
 	_set_bike_drawn(false)
 
 
