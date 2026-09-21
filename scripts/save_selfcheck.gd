@@ -182,7 +182,6 @@ func _initialize() -> void:
 	_check_save_wire_untouched()
 	await _check_save_verbs()
 	await _check_save_401_signs_out()
-	await _check_save_magic_link()
 	await _check_save_card_flip()
 	_report()
 
@@ -1222,6 +1221,31 @@ func _check_save_wire_untouched() -> void:
 # CHECK 17 — verbs: fetch GETs, a push POSTs, a clear DELETEs
 # ---------------------------------------------------------------------------
 
+## A session token for the signed-in arms: 64 lowercase hex, the shape the
+## server mints. Adoption writes the throwaway layers, so no fixture here can
+## leak into another check's profile.
+const SESSION_TOKEN: String = "ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12"
+
+
+## Wait until every verb node of a store is free: the verbs above reuse the
+## same nodes, and a request on a node the stub has not failed yet answers
+## ERR_BUSY — recording nothing and leaving the STALE headers for the assert.
+## A refused completion is an early return, so settling moves nothing but
+## time. Fails (without aborting) past the deadline so a stuck node cannot
+## hang the suite.
+func _settle_save_verbs(store: BestRunStore) -> void:
+	var deadline := Time.get_ticks_msec() + 15000
+	while Time.get_ticks_msec() < deadline:
+		var busy := false
+		for node in [store._get_http, store._post_http, store._save_get_http, store._save_post_http, store._save_delete_http, store._auth_http]:
+			if node != null and (node as HTTPRequest).get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+				busy = true
+		if not busy:
+			return
+		await process_frame
+	_expect(false, "the stub never freed the verb nodes — the arm below proves nothing")
+
+
 func _check_save_verbs() -> void:
 	BestRunStore.clear_save_slot()
 	var store := await _make_save_store()
@@ -1239,142 +1263,118 @@ func _check_save_verbs() -> void:
 	_expect(store._last_request_headers.is_empty(), "the anonymous clear sends no bearer")
 	_expect(BestRunStore.save_slot() == "",
 		"clear should empty the slot (negative control)")
-	# SIGNED IN: every verb carries the bearer it sent, pinned exactly. Two
-	# frames first: the verbs above reused these same nodes, and a second
-	# request in the same frame answers ERR_BUSY on a node the stub has not
-	# failed yet — which would assert the STALE headers, not the bearer's.
-	await process_frame
-	await process_frame
-	store._lobby_token = "probe-token"
+	# SIGNED IN: every verb carries `X-Session: <tok>`, pinned exactly. Settle,
+	# adopt (its fetch starts the GET pair on free nodes, so no armed flag
+	# survives), settle again, then each verb in turn with a settle between —
+	# a request on a node the stub has not failed yet answers ERR_BUSY, which
+	# would assert the STALE headers, not the session's. The clear's fallback
+	# POST carries it too.
+	await _settle_save_verbs(store)
+	if not store.adopt_session(SESSION_TOKEN):
+		_expect(false, "setup: adoption refused — the signed-in arm proves nothing")
+	await _settle_save_verbs(store)
 	store.fetch()
-	_expect(store._last_request_headers == PackedStringArray(["Authorization: Bearer probe-token"]),
-		"the signed-in slot GET should carry its bearer")
+	_expect(store._last_request_headers == PackedStringArray(["X-Session: " + SESSION_TOKEN]),
+		"the signed-in slot GET should carry its session header")
 	BestRunStore.write_save_slot(LITERAL)
 	store.push_save_slot()
-	_expect(store._last_request_headers == PackedStringArray(["Content-Type: application/json", "Authorization: Bearer probe-token"]),
-		"the signed-in slot POST should carry content type AND bearer")
+	_expect(store._last_request_headers == PackedStringArray(["Content-Type: application/json", "X-Session: " + SESSION_TOKEN]),
+		"the signed-in slot POST should carry content type AND the header")
+	await _settle_save_verbs(store)
 	BestRunStore.clear_save_slot()
-	_expect(store._last_request_headers == PackedStringArray(["Authorization: Bearer probe-token"]),
-		"the signed-in clear should carry its bearer")
-	store._lobby_token = ""
+	_expect(store._last_request_headers == PackedStringArray(["X-Session: " + SESSION_TOKEN]),
+		"the signed-in clear should carry its session header")
+	# The fallback POST, forced: a second clear on the same frame finds the
+	# DELETE node still busy and posts the empty blob instead — same header.
+	BestRunStore.clear_save_slot()
+	_expect(store._last_request_headers == PackedStringArray(["Content-Type: application/json", "X-Session: " + SESSION_TOKEN]),
+		"the signed-in fallback POST should carry content type AND the header")
+	# Control: signed out again, none do — not even the fallback POST.
+	store.sign_out()
+	await _settle_save_verbs(store)
+	store.fetch()
+	_expect(store._last_request_headers.is_empty(),
+		"the signed-out slot GET should carry nothing")
+	BestRunStore.write_save_slot(LITERAL)
+	store.push_save_slot()
+	_expect(store._last_request_headers == PackedStringArray(["Content-Type: application/json"]),
+		"the signed-out slot POST should carry only its content type")
+	BestRunStore.clear_save_slot()
+	_expect(store._last_request_headers.is_empty(),
+		"the signed-out clear should carry nothing")
 	store.queue_free()
 	Sentinel.done("save_verbs")
 
 
+
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # CHECK 17b — a 401 on any reply signs out (bead godot-test1-i8yu.7.2)
 # ---------------------------------------------------------------------------
 
 func _check_save_401_signs_out() -> void:
 	"""
-	A 401 means the session died server-side: the token goes, on EVERY verb.
-
-	`_reject_if_signed_out()` is the one gate, fed here the way `_feed_save_get`
+	A 401 means the session died server-side: the token goes, on EVERY verb —
+	all five reply handlers plus the link reply, fed here the way `_feed_save_get`
 	feeds the save handlers — direct calls, no network (the stub lobby could
-	only refuse the connection, never mint a 401). Each of the four reply
-	handlers is fed a 401 and must come back tokenless; a 200 on each must keep
-	the token, or the gate is over-eager and signs out on ordinary replies.
+	only refuse the connection, never mint a 401). Each handler is fed a 401
+	with the server's expiry text and must come back tokenless and having said
+	exactly that; a 200 on each must keep the token, or the gate is over-eager
+	and signs out on ordinary replies.
 
 	NON-VACUOUS by named mutation: the gate dropped (or wired into only some
 	handlers) leaves the token standing after that verb's 401 — red below, per
 	verb, by name.
 	"""
+	var why := "Your sign-in has expired — send a new link"
+	var error_body := ('{"error":"%s"}' % why).to_utf8_buffer()
 	BestRunStore.clear_save_slot()
 	var store := await _make_save_store()
-	store._lobby_token = "t"
-	_expect(not store._reject_if_signed_out(200), "a 200 is not a sign-out")
-	_expect(store._lobby_token == "t", "a 200 keeps the token")
-	_expect(store._reject_if_signed_out(401), "a 401 signs out")
-	_expect(store._lobby_token == "", "the 401 clears the token")
-	for handler in ["get", "save_get", "save_post", "magic"]:
-		store._lobby_token = "t"
+	if not store.adopt_session(SESSION_TOKEN):
+		_expect(false, "setup: adoption refused — the matrix below proves nothing")
+	_expect(not store._reject_if_signed_out(200, PackedByteArray()), "a 200 is not a sign-out")
+	_expect(store.session_token() == SESSION_TOKEN, "a 200 keeps the token")
+	_expect(store._reject_if_signed_out(401, error_body), "a 401 signs out")
+	_expect(store.session_token() == "", "the 401 clears the token")
+	for handler in ["get", "post", "save_get", "save_post", "save_delete", "magic"]:
+		if not store.adopt_session(SESSION_TOKEN):
+			_expect(false, "setup: re-adoption refused — the %s 401 proves nothing" % handler)
+			continue
+		var heard: Array = []
+		var on_session := func(signed: bool, text: String) -> void: heard.append([signed, text])
+		store.session_changed.connect(on_session)
 		match handler:
 			"get":
-				store._on_get_completed(HTTPRequest.RESULT_SUCCESS, 401, PackedStringArray([]), PackedByteArray())
+				store._on_get_completed(HTTPRequest.RESULT_SUCCESS, 401, PackedStringArray([]), error_body)
+			"post":
+				store._on_post_completed(HTTPRequest.RESULT_SUCCESS, 401, PackedStringArray([]), error_body)
 			"save_get":
-				store._on_save_get_completed(HTTPRequest.RESULT_SUCCESS, 401, PackedStringArray([]), PackedByteArray())
+				store._on_save_get_completed(HTTPRequest.RESULT_SUCCESS, 401, PackedStringArray([]), error_body)
 			"save_post":
-				store._on_save_post_completed(HTTPRequest.RESULT_SUCCESS, 401, PackedStringArray([]), PackedByteArray())
+				store._on_save_post_completed(HTTPRequest.RESULT_SUCCESS, 401, PackedStringArray([]), error_body)
+			"save_delete":
+				store._on_save_delete_completed(HTTPRequest.RESULT_SUCCESS, 401, PackedStringArray([]), error_body)
 			"magic":
-				store._on_magic_link_completed(HTTPRequest.RESULT_SUCCESS, 401, PackedStringArray([]), PackedByteArray())
-		_expect(store._lobby_token == "", "a 401 on %s should sign out" % handler)
+				store._on_magic_link_completed(HTTPRequest.RESULT_SUCCESS, 401, PackedStringArray([]), error_body)
+		_expect(store.session_token() == "", "a 401 on %s should sign out" % handler)
+		_expect(heard == [[false, why]], "a 401 on %s should say exactly the server text, heard %s" % [handler, heard])
+		store.session_changed.disconnect(on_session)
 	# NEGATIVE CONTROL: benign replies keep the session on every handler.
-	store._lobby_token = "t"
+	if not store.adopt_session(SESSION_TOKEN):
+		_expect(false, "setup: adoption refused — the control below proves nothing")
 	store._on_get_completed(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray([]), "{}".to_utf8_buffer())
-	_expect(store._lobby_token == "t", "a 200 records GET keeps the token")
+	_expect(store.session_token() == SESSION_TOKEN, "a 200 records GET keeps the token")
 	store._on_save_get_completed(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray([]), '{"blob": ""}'.to_utf8_buffer())
-	_expect(store._lobby_token == "t", "a 200 empty-slot GET keeps the token")
+	_expect(store.session_token() == SESSION_TOKEN, "a 200 empty-slot GET keeps the token")
 	store._on_save_post_completed(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray([]), '{"blob": "", "saved_at": 0}'.to_utf8_buffer())
-	_expect(store._lobby_token == "t", "a 200 save POST keeps the token")
-	store._on_magic_link_completed(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray([]), PackedByteArray())
-	_expect(store._lobby_token == "t", "a 200 link reply keeps the token")
-	store._lobby_token = ""
+	_expect(store.session_token() == SESSION_TOKEN, "a 200 save POST keeps the token")
+	store.sign_out()
 	store.queue_free()
 	Sentinel.done("save_401_signs_out")
 
 
+
 # ---------------------------------------------------------------------------
-# CHECK 17c — the magic-link request and token adoption (bead godot-test1-i8yu.7.2)
-# ---------------------------------------------------------------------------
-
-func _check_save_magic_link() -> void:
-	"""
-	The client half of passwordless sign-in: strict email in, bearer-wearing
-	POST out; strict token envelope in, signed-in state out.
-
-	`request_magic_link()` refuses anything but `MAGIC_LINK_EMAIL_PATTERN`
-	with nothing recorded and nothing sent; on a valid address it remembers the
-	address and starts exactly one POST whose builder (`_magic_link_request()`,
-	pure) carries the email, the redirect, and the bearer beside the content
-	type. `adopt_magic_token()` refuses the empty, the over-long and the
-	non-URL-safe with the token untouched; a good token signs in, remembers
-	(nothing new — the request's address), and fetches once; the same token
-	twice is true without a second fetch.
-
-	NON-VACUOUS by named mutation: the validator skipped accepts the garbage
-	probes; the bearer dropped from the builder fails the header pin; adoption
-	without the envelope check accepts the space probe; adoption that forgets
-	the fetch leaves the merge path cold (the spy in the claim probe owns that
-	count — here the fetch is only observed to start).
-	"""
-	BestRunStore.clear_save_slot()
-	var store := await _make_save_store()
-	_expect(BestRunStore.is_valid_magic_email("pilot@example.com"), "a plain address should validate")
-	_expect(BestRunStore.is_valid_magic_email("a.b+c_d@sub.example.co"), "dots, plus and multisubdomain should validate")
-	for bad in ["nope", "a@b", "a@b.c", "a b@c.de", "@c.de", "a@", "", "a@@b.co", "a@b..de", "x".repeat(250) + "@example.com"]:
-		_expect(not BestRunStore.is_valid_magic_email(bad), "should refuse %s" % bad.left(40))
-	# REFUSAL RECORDS AND SENDS NOTHING.
-	_expect(not store.request_magic_link("garbage"), "a typo address should be refused")
-	_expect(store._magic_email_sent == "", "a refused request records no address")
-	_expect(store._last_request_headers.is_empty(), "a refused request sends nothing")
-	_expect(not store.signed_in(), "a refused request signs in nothing")
-	# A VALID REQUEST REMEMBERS AND SENDS.
-	_expect(store.request_magic_link("  pilot@example.com  "), "a valid address with padding should send")
-	_expect(store._magic_email_sent == "pilot@example.com", "the request should remember the trimmed address")
-	var ask := store._magic_link_request()
-	_expect(String(ask["url"]).ends_with("/auth/magic"), "the link POST should hit /auth/magic")
-	var sent_body: Variant = JSON.parse_string(String(ask["body"]))
-	_expect(sent_body is Dictionary and String(sent_body.get("email", "")) == "pilot@example.com", "the link POST should carry the address")
-	_expect(sent_body is Dictionary and sent_body.has("redirect"), "the link POST should carry a redirect")
-	_expect((ask["headers"] as PackedStringArray) == PackedStringArray(["Content-Type: application/json"]), "the anonymous link POST sends only its content type")
-	_expect(store._last_request_headers == (ask["headers"] as PackedStringArray), "the started link POST should record its headers")
-	# ADOPTION: garbage refused, token untouched.
-	for bad_token in ["", "has space", "x".repeat(257), "semi;colon"]:
-		_expect(not store.adopt_magic_token(bad_token), "should refuse token %s" % bad_token.left(20))
-	_expect(not store.signed_in(), "refused tokens sign in nothing")
-	_expect(store.signed_in_email() == "", "no token means no address to show")
-	# ADOPTION: a good token signs in, remembers the request's address, fetches.
-	_expect(store.adopt_magic_token("tok123"), "a clean token should adopt")
-	_expect(store.signed_in(), "an adopted token is signed in")
-	_expect(store.signed_in_email() == "pilot@example.com", "the adopted session should show the requested address")
-	_expect(store.adopt_magic_token("tok123"), "the same token twice stays true")
-	# SIGN-OUT FORGETS THE SESSION BUT KEEPS THE ADDRESS BOOK: a re-send goes
-	# to the same mailbox with one tap.
-	store._lobby_token = ""
-	_expect(not store.signed_in(), "a cleared token is signed out")
-	_expect(store.signed_in_email() == "", "signed out shows no address")
-	store.queue_free()
-	Sentinel.done("save_magic_link")
 
 
 # ---------------------------------------------------------------------------

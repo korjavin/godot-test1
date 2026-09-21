@@ -2767,19 +2767,3 @@ const SRC: String = """
 	return 1;
 })()
 """
-
-## The magic-link token sniff (bead `godot-test1-i8yu.7.2`): read `?token=` off
-## the page URL, or "" when absent — a STRING either way, never a boolean (the
-## bridge corrupts booleans into dead Variants; `intro_selfcheck`'s all-scripts
-## scan covers this const the way it covers the voice source above). Tapping the
-## emailed link reopens the game with the token the lobby minted for that click;
-## the MP panel evals this once per session and hands a non-empty answer to
-## `BestRunStore.adopt_magic_token()`.
-const MAGIC_TOKEN_SNIPPET: String = """
-(function () {
-	try {
-		var m = window.location.search.match(/[?&]token=([^&]+)/);
-		return m ? decodeURIComponent(m[1]) : '';
-	} catch (e) { return ''; }
-})()
-"""

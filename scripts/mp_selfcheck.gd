@@ -145,6 +145,9 @@ func _run_checks() -> String:
 	failure = await _check_magic_link_panel()
 	if not failure.is_empty():
 		return failure
+	failure = await _check_magic_link_panel_off_web()
+	if not failure.is_empty():
+		return failure
 	failure = _check_terrain_focus_points()
 	if not failure.is_empty():
 		return failure
@@ -1194,37 +1197,61 @@ class MagicStubPlayer extends Node:
 		add_to_group("player")
 
 
+## A save store whose link-request transport is a recorder, not a POST: the
+## real `request_magic_link()` still validates and persists the address, but
+## instead of sending, the stub records and emits the forced reply — so the
+## probe drives the panel's send path with a refused address, a sent link and
+## a rate-limited refusal without the network deciding anything.
+class MagicStubStore extends BestRunStore:
+	var sent_address: String = ""
+	var sent_count: int = 0
+	var forced_ok: bool = true
+	var forced_why: String = ""
+	func _request_magic_link() -> void:
+		sent_count += 1
+		sent_address = _session_email
+		magic_link_sent.emit(forced_ok, forced_why)
+
+
 func _check_magic_link_panel() -> String:
 	"""
-	The Sync section's auth trio: an email row, the claim-code display as the
-	code row, and a sign-in status that is state, never echo.
+	The Sync section's email sign-in, in its three states: signed out (caption
+	+ field + Send), link sent (the check-your-mail hint), signed in ("Signed
+	in as …" + Sign out, claim rows hidden) — and back, with the claim rows
+	restored. Off-web (the override at 0) the email rows are never built and
+	the claim rows stay.
 
-	Garbage is refused with the reason on the status label and nothing recorded;
-	a valid address records, clears the field and says LINK SENT; a held token
-	flips the status to SIGNED IN AS the validated address; a typed-but-unsent
-	field never leaks into the status; losing the token between refreshes (the
-	401 that landed quietly) says SIGNED OUT once and then stays quiet; German
-	repaints the placeholder and the status; the URL sniff answers "" on desktop.
+	A typo'd address speaks the refusal on the status label and sends nothing;
+	a good one records the address and raises the hint; a forced refusal
+	surfaces the server's own text; adopting signs in and hides ClaimId with
+	ClaimInput; signing out brings them back.
 
-	NON-VACUOUS by named mutation: the status painted off the field instead of
-	`signed_in()` echoes the typed address (M1); the edge unspoken leaves the
-	status label off after a sign-out (M2); the placeholder resolved only at
-	build freezes English under German (M3). Hermetic: the stub lobby while the
-	panel lives, restored with the locale afterwards.
+	NON-VACUOUS by named mutation: the status painted off anything but the
+	session echoes wrong (M1 is the store's); the claim rows kept visible
+	while signed in fail the hidden pin (M5); the shape rule skipped sends the
+	typo (M4, via the recorded count); the override ignored builds EmailInput
+	at 0 and hides it at 1 (the control). Hermetic: the stub lobby while the
+	panel lives, the override restored after.
 	"""
 	var restore_url: String = BestRunStore.lobby_url_override
 	BestRunStore.lobby_url_override = "http://127.0.0.1:9"
-	var restore_locale: String = TranslationServer.get_locale()
+	var restore_override: int = BestRunStore.auth_available_override
+	BestRunStore.auth_available_override = 1
 	var stub := MagicStubPlayer.new()
-	var store := BestRunStore.new()
+	var store := MagicStubStore.new()
 	stub.best_run_store = store
 	root.add_child(stub)
 	root.add_child(store)
 	var panel: Control = MultiplayerUI.new()
 	root.add_child(panel)
 	await process_frame
+	# The panel builds closed (the N toggle owns that, pause and all); the paint
+	# under test is the ROWS', so show the body directly — `is_visible_in_tree()`
+	# pins what the player sees. The toggle path itself is pause_selfcheck's
+	# subject, which builds this same panel.
+	panel.find_child("MPPanel", true, false).visible = true
 	var failure: String = await _drive_magic_link_panel(panel, store)
-	TranslationServer.set_locale(restore_locale)
+	BestRunStore.auth_available_override = restore_override
 	BestRunStore.lobby_url_override = restore_url
 	panel.free()
 	stub.free()
@@ -1234,62 +1261,103 @@ func _check_magic_link_panel() -> String:
 	return failure
 
 
-func _drive_magic_link_panel(panel: Control, store: BestRunStore) -> String:
-	var field: LineEdit = panel.get("_magic_email") as LineEdit
-	var status: Label = panel.get("_auth_status") as Label
-	var heard: Label = panel.get("_status_label") as Label
-	if field == null or status == null or heard == null:
-		return "the Sync section has no email row, status row or status label"
+func _drive_magic_link_panel(panel: Control, store: MagicStubStore) -> String:
+	var field := panel.find_child("EmailInput", true, false) as LineEdit
+	var send := panel.find_child("SendLink", true, false) as Button
+	var heard := panel.get("_status_label") as Label
+	if field == null or send == null or heard == null:
+		return "the Sync section has no email field, Send button or status label"
 	panel._refresh_claim()
-	if status.text != "NOT SIGNED IN":
-		return "signed out should read NOT SIGNED IN, got %s" % status.text
+	var hint := panel.find_child("MailHint", true, false) as Label
+	var signed_row := panel.find_child("SignedInLabel", true, false) as Label
+	var claim_id := panel.find_child("ClaimId", true, false) as Label
+	var claim_input := panel.find_child("ClaimInput", true, false) as LineEdit
+	if hint == null or signed_row == null or claim_id == null or claim_input == null:
+		return "the Sync section is missing a state row or a claim row"
+	if hint.is_visible_in_tree() or signed_row.is_visible_in_tree():
+		return "signed out should show neither the mail hint nor the signed-in row"
+	if not claim_id.is_visible_in_tree() or not claim_input.is_visible_in_tree():
+		return "signed out should show the claim rows"
+	# A typo speaks on the status label and sends nothing.
 	field.text = "not-an-email"
-	panel._on_magic_send_pressed()
-	if store._magic_email_sent != "":
-		return "a refused address was recorded"
-	if heard.text != "NOT A VALID EMAIL ADDRESS":
+	panel._on_send_link_pressed()
+	if store.sent_count != 0:
+		return "a refused address started a link request (M4)"
+	if heard.text != "That does not look like an email address":
 		return "a refused address should say why, heard %s" % heard.text
-	if status.text != "NOT SIGNED IN":
-		return "the status row echoed the typed-but-unsent field: %s" % status.text
+	# A good address records and raises the link-sent hint.
 	field.text = "pilot@example.com"
-	panel._on_magic_send_pressed()
-	if store._magic_email_sent != "pilot@example.com":
-		return "a valid send recorded %s" % store._magic_email_sent
+	panel._on_send_link_pressed()
+	if store.sent_address != "pilot@example.com" or store.sent_count != 1:
+		return "a good address was not recorded and sent once: %s x %d" % [store.sent_address, store.sent_count]
 	if field.text != "":
-		return "a valid send should clear the field"
-	if heard.text != "LINK SENT \u2014 CHECK YOUR EMAIL":
-		return "a valid send should say LINK SENT, heard %s" % heard.text
-	store._lobby_token = "panel-probe"
-	panel._refresh_claim()
-	if status.text != "SIGNED IN AS pilot@example.com":
-		return "a held token should read SIGNED IN AS the address, got %s" % status.text
-	field.text = "other@example.com"
-	panel._refresh_claim()
-	if status.text != "SIGNED IN AS pilot@example.com":
-		return "the status row leaked the unsent field: %s" % status.text
-	store._lobby_token = ""
-	panel._refresh_claim()
-	if status.text != "NOT SIGNED IN":
-		return "after a sign-out the status should read NOT SIGNED IN, got %s" % status.text
-	if heard.text != "SIGNED OUT \u2014 RECORDS ARE LOCAL-ONLY":
-		return "a quiet 401 should speak once, heard %s" % heard.text
-	heard.text = "QUIET"
-	panel._refresh_claim()
-	if heard.text != "QUIET":
-		return "the sign-out spoke twice: %s" % heard.text
-	if panel._sniff_magic_token() != "":
-		return "the token sniff should answer blank on desktop"
-	TranslationServer.set_locale("de")
-	await process_frame
-	panel._refresh_claim()
-	if field.placeholder_text != "E-MAIL F\u00dcR ANMELDELINK":
-		return "the German placeholder did not repaint: %s" % field.placeholder_text
-	store._lobby_token = "panel-probe"
-	panel._refresh_claim()
-	if status.text != "ANGEMELDET ALS pilot@example.com":
-		return "the German status did not repaint: %s" % status.text
-	store._lobby_token = ""
+		return "a sent link should clear the field"
+	if not hint.is_visible_in_tree():
+		return "after a sent link the check-your-mail hint should show"
+	# A forced refusal surfaces the server's own text and sends again.
+	store.forced_ok = false
+	store.forced_why = "Too many sign-in links — try again in 3 minutes"
+	field.text = "pilot@example.com"
+	panel._on_send_link_pressed()
+	if store.sent_count != 2:
+		return "a resend is just pressing again — wanted a second send, got %d" % store.sent_count
+	if heard.text != "Too many sign-in links — try again in 3 minutes":
+		return "a refused send should surface the server text, heard %s" % heard.text
+	store.forced_ok = true
+	# Adopting signs in: the address shows, the claim rows hide.
+	if not store.adopt_session("ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12"):
+		return "setup: adoption refused — the signed-in half proves nothing"
+	if signed_row.text != "Signed in as pilot@example.com":
+		return "a held session should read Signed in as the address, got %s" % signed_row.text
+	if not signed_row.is_visible_in_tree():
+		return "the signed-in row should show while signed in"
+	if hint.is_visible_in_tree():
+		return "the mail hint should retire once signed in"
+	if claim_id.is_visible_in_tree() or claim_input.is_visible_in_tree():
+		return "the claim rows should hide while signed in (M5)"
+	# Signing out brings the claim rows back and retires the row.
+	store.sign_out()
+	if signed_row.is_visible_in_tree():
+		return "the signed-in row should retire after sign-out"
+	if not claim_id.is_visible_in_tree() or not claim_input.is_visible_in_tree():
+		return "the claim rows should return after sign-out"
+	if heard.text != "Signed out":
+		return "a deliberate sign-out should say so, heard %s" % heard.text
 	return ""
+
+
+func _check_magic_link_panel_off_web() -> String:
+	"""
+	The control: with the override at 0 no EmailInput node is built at all
+	and the claim rows stay visible. A second panel instance, because rows are
+	built once at build time.
+	"""
+	var restore_override: int = BestRunStore.auth_available_override
+	BestRunStore.auth_available_override = 0
+	var stub := MagicStubPlayer.new()
+	var store := MagicStubStore.new()
+	stub.best_run_store = store
+	root.add_child(stub)
+	root.add_child(store)
+	var panel: Control = MultiplayerUI.new()
+	root.add_child(panel)
+	await process_frame
+	panel.find_child("MPPanel", true, false).visible = true
+	var failure := ""
+	if panel.find_child("EmailInput", true, false) != null:
+		failure = "off-web the panel built an EmailInput anyway — the override is ignored (M7)"
+	else:
+		panel._refresh_claim()
+		var claim_id := panel.find_child("ClaimId", true, false) as Label
+		if claim_id == null or not claim_id.is_visible_in_tree():
+			failure = "off-web the claim rows should stay visible"
+	BestRunStore.auth_available_override = restore_override
+	panel.free()
+	stub.free()
+	store.free()
+	if failure.is_empty():
+		Sentinel.done("magic_link_panel_off_web")
+	return failure
 
 
 func _check_terrain_focus_points() -> String:
