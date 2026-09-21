@@ -1329,3 +1329,153 @@ func TestAuthLinkBaseSanitizes(t *testing.T) {
 		}
 	}
 }
+
+// TestAuthPendingPerIPCap: one ip may hold only a handful of unopened links —
+// past it the next request 429s even with the rate window quiet and the
+// global 1000-cap nowhere near. (The count below is maxAuthPendingPerIP,
+// kept literal so this test compiles — and fails — on pre-fix master.)
+func TestAuthPendingPerIPCap(t *testing.T) {
+	t.Setenv("SMTP_HOST", "mail.example")
+	e := newAuthEnv()
+	e.auth.send = func(to, link string) error { return nil }
+	base := time.Now()
+	cur := base
+	e.auth.now = func() time.Time { return cur }
+
+	const ip = "10.9.9.9"
+	for i := 0; i < 10; i++ {
+		if rec := postMagic(e, fmt.Sprintf("pip%d@example.com", i), ip); rec.Code != http.StatusOK {
+			t.Fatalf("link %d status %d (%s)", i, rec.Code, rec.Body.String())
+		}
+	}
+	// Past the 10-minute rate window but inside the 15-minute pending life:
+	// the rate limiter is quiet, so only a per-ip pending count can refuse.
+	cur = base.Add(magicPerIPWindow + time.Minute)
+	if rec := postMagic(e, "pip-extra@example.com", ip); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("over-cap link status %d, wanted 429", rec.Code)
+	} else if got := decodeAuthError(t, rec); got != "Too many unopened sign-in links — try again in a minute" {
+		t.Errorf("pending-cap refusal %q", got)
+	}
+	// Another ip is unaffected, and expired pending frees the count: past
+	// the 15-minute life the same ip sends again.
+	if rec := postMagic(e, "pip-other@example.com", "10.9.9.10"); rec.Code != http.StatusOK {
+		t.Fatalf("other ip status %d, wanted 200", rec.Code)
+	}
+	cur = base.Add(magicTTL + time.Minute)
+	if rec := postMagic(e, "pip-late@example.com", ip); rec.Code != http.StatusOK {
+		t.Fatalf("post-expiry link status %d, wanted 200", rec.Code)
+	}
+}
+
+// TestAuthMagicRequiresProxyHeader: POST /auth/magic without X-Real-Ip fails
+// CLOSED with a 503 naming the missing proxy header — never one bucket for
+// the world — and mints nothing. The header present takes the normal path.
+func TestAuthMagicRequiresProxyHeader(t *testing.T) {
+	t.Setenv("SMTP_HOST", "mail.example")
+	e := newAuthEnv()
+	e.auth.send = func(to, link string) error { return nil }
+
+	body, _ := json.Marshal(map[string]any{"email": "player@example.com"})
+	r := httptest.NewRequest(http.MethodPost, "/auth/magic", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	e.auth.magicHandler(w, r)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("headerless magic status %d, wanted 503", w.Code)
+	}
+	if got := decodeAuthError(t, w); !strings.Contains(got, "proxy header is missing") {
+		t.Fatalf("headerless magic error %q, wanted the missing-proxy-header reason", got)
+	}
+	if n := len(e.auth.pending); n != 0 {
+		t.Fatalf("headerless request minted %d pending tokens", n)
+	}
+	if rec := postMagic(e, "player@example.com", "203.0.113.7"); rec.Code != http.StatusOK {
+		t.Fatalf("headed magic status %d, wanted 200", rec.Code)
+	}
+}
+
+// TestAuthFirstLinkRaceMergesOnce: two sessions racing on one anon id merge
+// it into exactly one sub. The claim and both merges hold one auth lock, so
+// the loser finds the alias already recorded and merges nothing — the
+// round-1 merge-first order merged into both.
+func TestAuthFirstLinkRaceMergesOnce(t *testing.T) {
+	e := newAuthEnv()
+	const anon = "cccccccccccccccccccccccccccccccc"
+	const subB = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	subA := testSub
+	if rec := authedBest(e, http.MethodPost, anon, "", `{"distance":100}`); rec.Code != http.StatusOK {
+		t.Fatalf("seed anon best status %d", rec.Code)
+	}
+	if rec := authedSave(e, http.MethodPost, anon, "", `{"blob":"RACE","saved_at":70}`); rec.Code != http.StatusOK {
+		t.Fatalf("seed anon save status %d", rec.Code)
+	}
+	// Both racers enter together past any outer check: the gate releases
+	// them at once and linkAuthAlias itself decides who claims.
+	gate := make(chan struct{})
+	var wg sync.WaitGroup
+	for _, sub := range []string{subA, subB} {
+		wg.Add(1)
+		go func(s string) {
+			defer wg.Done()
+			<-gate
+			linkAuthAlias(e.auth, anon, s)
+		}(sub)
+	}
+	close(gate)
+	wg.Wait()
+
+	e.auth.mu.Lock()
+	alias := e.auth.aliases[anon]
+	e.auth.mu.Unlock()
+	if alias != subA && alias != subB {
+		t.Fatalf("alias points at %q, wanted one racing sub", alias)
+	}
+	aHas := e.best.get(subA).Distance == 100 && e.save.get(subA).Blob == "RACE"
+	bHas := e.best.get(subB).Distance == 100 && e.save.get(subB).Blob == "RACE"
+	if aHas == bHas {
+		t.Fatalf("anon record merged into a=%v b=%v, wanted exactly one sub", aHas, bHas)
+	}
+	if want := map[string]bool{subA: aHas, subB: bHas}[alias]; !want {
+		t.Errorf("alias names the sub that holds no merge")
+	}
+}
+
+// TestAuthCorruptFileKeptAsBad: a corrupt auth.json is renamed to auth.json
+// .bad (same bytes) before the store starts empty — the next dump must not
+// silently pave it. A clean file and a missing file leave no .bad behind.
+func TestAuthCorruptFileKeptAsBad(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.json")
+	bad := []byte("{corrupt, not json")
+	if err := os.WriteFile(path, bad, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := newAuthStore(path, newBestStore(""), newSaveStore(""))
+	kept, err := os.ReadFile(path + ".bad")
+	if err != nil {
+		t.Fatalf("corrupt auth.json has no .bad copy: %v", err)
+	}
+	if string(kept) != string(bad) {
+		t.Errorf(".bad holds %q, wanted the original bytes", kept)
+	}
+	a.mu.Lock()
+	n := len(a.sessions) + len(a.aliases) + len(a.subs)
+	a.mu.Unlock()
+	if n != 0 {
+		t.Errorf("corrupt file loaded %d records, wanted empty", n)
+	}
+
+	clean := filepath.Join(dir, "clean.json")
+	if err := os.WriteFile(clean, []byte(`{"sessions":{},"aliases":{},"subs":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newAuthStore(clean, newBestStore(""), newSaveStore(""))
+	if _, err := os.Stat(clean + ".bad"); !os.IsNotExist(err) {
+		t.Errorf("clean file left a .bad behind")
+	}
+	missing := filepath.Join(dir, "missing.json")
+	newAuthStore(missing, newBestStore(""), newSaveStore(""))
+	if _, err := os.Stat(missing + ".bad"); !os.IsNotExist(err) {
+		t.Errorf("missing file left a .bad behind")
+	}
+}

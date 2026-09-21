@@ -91,6 +91,11 @@ const (
 	maxAuthSessions = 10000
 	maxAuthAliases  = 10000
 	maxAuthPending  = 1000
+	// maxAuthPendingPerIP bounds one ip's UNOPENED links beside the global
+	// cap: without it a single client fills the shared 1000 and no one else
+	// in the CGNAT pool signs in. Past it a request answers 429; opened
+	// links consume their pending, expired ones stop counting.
+	maxAuthPendingPerIP = 10
 	// maxAuthSubs caps the email-hash -> sub map, like the others. Past it a
 	// NEW address answers 429 (a known hash still resolves — refusing it
 	// would split nothing, it only reuses).
@@ -118,11 +123,13 @@ type authSession struct {
 	Exp int64  `json:"exp"`
 }
 
-// authPending is one mailed link not yet opened: whose, until when. Memory
-// only — the dump file never sees these.
+// authPending is one mailed link not yet opened: whose, until when, from
+// which client ip (the per-ip pending count, m3). Memory only — the dump
+// file never sees these.
 type authPending struct {
 	Sub string
 	Exp int64
+	IP  string
 }
 
 // authWindow is one fixed rate-limit window: hits so far, until when. Memory
@@ -169,10 +176,16 @@ func newAuthStore(path string, best *bestStore, save *saveStore) *authStore {
 		}
 	}
 	if path != "" {
-		if err := a.load(); err != nil {
-			// A missing file is the first-run path, not an error.
-			if !errors.Is(err, os.ErrNotExist) {
-				log.Printf("lobby: auth: could not load %s: %v (starting empty)", path, err)
+		if err := a.load(); err != nil && !errors.Is(err, os.ErrNotExist) {
+			// A corrupt file is renamed aside BEFORE starting empty
+			// (m10): without the copy the next dirty dump paves the only
+			// evidence. Best effort — a store that cannot read usually
+			// cannot rename either, and either way it starts empty; a
+			// missing file is the first-run path, not an error.
+			if rerr := os.Rename(path, path+".bad"); rerr != nil {
+				log.Printf("lobby: auth: could not load %s: %v (starting empty, no .bad copy: %v)", path, err, rerr)
+			} else {
+				log.Printf("lobby: auth: could not load %s: %v (starting empty, corrupt file kept as %s.bad)", path, err, path)
 			}
 		}
 	}
@@ -251,12 +264,15 @@ func tokenKey(tok string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// clientIP is the rate-limit identity: X-Real-Ip when Traefik set it, else
-// the connection's host. Undefended invariant, stated not checked: the
-// container is only reachable through the traefik network, so the header is
-// not spoofable from outside — but an absent header buckets the whole world
-// together, and direct container access would forge it. Both are deployment
-// facts, not code the lobby can verify; hence the comment, not a check.
+// clientIP is the rate-limit identity: X-Real-Ip when present, else the
+// connection's host. The trust invariant lives in
+// server/docker-compose.yml: the lobby container is only reachable through
+// the godot-lobby router on the traefik network, so from outside the header
+// is Traefik's, not the client's — direct container access would let a
+// client forge it, and a second router without the header would too. The
+// absent half is defended in code: POST /auth/magic refuses headerless
+// requests outright (503, fail closed) instead of bucketing the whole world
+// together. Never read this header on a route that answers without it.
 func clientIP(r *http.Request) string {
 	if ip := strings.TrimSpace(r.Header.Get("X-Real-Ip")); ip != "" {
 		return ip
@@ -343,6 +359,13 @@ func (a *authStore) magicHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Fail CLOSED without the proxy header (m4): no header means no
+	// per-ip identity, and falling back to the connection here would rate
+	// the whole world as one client. Local runs set it by hand.
+	if strings.TrimSpace(r.Header.Get("X-Real-Ip")) == "" {
+		writeAuthError(w, r, http.StatusServiceUnavailable, "Sign-in is unavailable — the proxy header is missing")
+		return
+	}
 
 	var body struct {
 		Email string `json:"email"`
@@ -368,7 +391,8 @@ func (a *authStore) magicHandler(w http.ResponseWriter, r *http.Request) {
 	// bumped only on a well-formed address.
 	now := a.now()
 	a.mu.Lock()
-	emKey, ipKey := "em:"+hash, "ip:"+clientIP(r)
+	cip := clientIP(r)
+	emKey, ipKey := "em:"+hash, "ip:"+cip
 	em, emOK := a.limits[emKey]
 	emLive := emOK && now.Before(em.until)
 	ip, ipOK := a.limits[ipKey]
@@ -408,6 +432,20 @@ func (a *authStore) magicHandler(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, r, http.StatusTooManyRequests, "The lobby is busy — try again in a minute")
 		return
 	}
+	// Per-ip pending count (m3): only live entries count — expired ones are
+	// the sweeper's within a minute, and refusing on them would punish a
+	// recovered client for the janitor's lag.
+	perIP := 0
+	for _, p := range a.pending {
+		if p.IP == cip && now.Before(time.Unix(p.Exp, 0)) {
+			perIP++
+		}
+	}
+	if perIP >= maxAuthPendingPerIP {
+		a.mu.Unlock()
+		writeAuthError(w, r, http.StatusTooManyRequests, "Too many unopened sign-in links — try again in a minute")
+		return
+	}
 	// The sub resolves AFTER the limits (a 429 must not mint an account) and
 	// fails closed past the subs cap.
 	sub, err := a.subForLocked(hash)
@@ -426,7 +464,7 @@ func (a *authStore) magicHandler(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, r, http.StatusInternalServerError, "Could not send a sign-in link")
 		return
 	}
-	a.pending[tokenKey(tok)] = authPending{Sub: sub, Exp: now.Add(magicTTL).Unix()}
+	a.pending[tokenKey(tok)] = authPending{Sub: sub, Exp: now.Add(magicTTL).Unix(), IP: cip}
 	a.mu.Unlock()
 
 	link := magicLinkBase(r) + "/auth/verify?t=" + tok
@@ -559,13 +597,15 @@ func (a *authStore) sessionHandler(w http.ResponseWriter, r *http.Request) {
 // already points elsewhere is never re-pointed. Past the alias cap the link
 // is refused SILENTLY: the request still runs under sub.
 //
-// Lock order, stated because the race test leans on it: the alias check, cap
-// and claim take the auth lock and nothing else, released before the merges —
-// never nested either way. Two documented non-goals, stated not fixed: two
-// FIRST-links for one anon id racing across sessions can merge that one anon
-// record into two subs (the merges are monotone/idempotent, impact low — the
-// alias itself still records once); and a corrupt auth.json loads empty and
-// is overwritten on the next dump, exactly like save.go.
+// Lock order, stated because the race test leans on it: the alias check,
+// cap, claim AND both merges hold the auth lock as one critical section, and
+// inside it the merges take the best/save locks — auth before best/save,
+// never the reverse (neither store calls back into auth). Round 1 merged
+// first and claimed after, so two racing first-links merged one anon record
+// into two subs; round 2 claimed first; now the whole link is one hold and a
+// second racer finds the alias recorded and merges nothing. One documented
+// non-goal, stated not fixed: a corrupt auth.json loads empty and is kept as
+// a .bad copy, exactly like save.go's logged-empty start.
 func (a *authStore) withSession(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
@@ -613,25 +653,24 @@ func (a *authStore) withSession(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // linkAuthAlias merges one anon id into sub once and records the alias. The
-// cap is checked and the slot CLAIMED first, the merges run after: past the
-// cap a merge-first order would re-merge on every request (and one session
-// could walk 10 000 distinct ?id=s through it), while a claimed slot skips
-// everything. The merges themselves run lock-free (each store serialises
-// itself); the alias check, cap and claim take the auth lock and nothing
-// else.
+// cap is checked and the slot CLAIMED first, then the merges run, all under
+// ONE hold of the auth lock: past the cap a merge-first order would re-merge
+// on every request (and one session could walk 10 000 distinct ?id=s through
+// it), while a claimed slot skips everything — and two sessions racing on
+// one anon id serialise here, so the loser finds the alias recorded and
+// merges nothing. The merges take the best/save locks inside (auth before
+// best/save, never nested the other way).
 func linkAuthAlias(a *authStore, anon, sub string) {
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	if _, linked := a.aliases[anon]; linked {
-		a.mu.Unlock()
 		return
 	}
 	if len(a.aliases) >= maxAuthAliases {
-		a.mu.Unlock()
 		return
 	}
 	a.aliases[anon] = sub
 	a.dirty = true
-	a.mu.Unlock()
 	rec := a.best.get(anon)
 	a.best.merge(sub, rec.Distance, rec.Coins, rec.Lifetime, rec.Spent, rec.Found)
 	sv := a.save.get(anon)
