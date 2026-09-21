@@ -662,26 +662,44 @@ const SIGN_KINDS: Array[Dictionary] = [
 	},
 ]
 
-## One lamp box, a side. The city's own is 0.22 on a 4 m mast (`CITY_LIGHT_LAMP`);
-## this head sits on a 2.6 m bike-path post, so it is scaled down to match.
-const BIKE_LAMP: float = 0.16
+## One lamp box, a side. The city's own 0.22 on a 4 m mast (`CITY_LIGHT_LAMP`);
+## STEP 0 of bead `godot-test1-7ami` (web debug export, camera 3 m from a real
+## head) showed the cycle writes land on web — green, then amber, then red — so
+## the owner's "we don't see it change" is readability, not plumbing: 0.16 m
+## lenses stepping every 2.2–4.5 s. The head takes the city's own 0.22.
+const BIKE_LAMP: float = 0.22
 
 ## How far an UNLIT lens is darkened from its own colour. The stack must still read
 ## as a traffic light with every lamp off — which is how every head looks for its
-## first fraction of a dwell after a chunk loads.
-const BIKE_LAMP_DIM: float = 0.62
+## first fraction of a dwell after a chunk loads — but an unlit lens at 0.62 reads
+## as lit at riding distance. 0.80 leaves a clearly dark lens beside the lit one.
+const BIKE_LAMP_DIM: float = 0.80
 
 ## The lamp the cycle lights, by phase: G -> A -> R. The stack is built top-down
 ## RED, AMBER, GREEN (the city's order), so phase 0 lights lamp 2.
 const SIGNAL_LIT: Array[int] = [2, 1, 0]
 
-## The dwell between steps, seconds, rolled once per head off a `randomize()`d RNG.
-## THE FLOOR IS A PERFORMANCE NUMBER, not a taste one: `set_instance_color` dirties
-## the whole instance buffer and a field chunk's CUBE bucket carries several
-## hundred boxes, so a head must never be a per-frame writer. With the phase rolled
-## the same way, heads in one chunk are staggered for free.
-const SIGNAL_DWELL_MIN: float = 2.2
-const SIGNAL_DWELL_MAX: float = 4.5
+## The dwell per phase, seconds: green ~8, amber ~2, red ~8 — a real light's
+## rhythm (bead `godot-test1-7ami`), three consts and not one range. The PHASE
+## stays `randomize()`d per head (ambience, never seeded, never on the wire),
+## so heads in one chunk are staggered for free.
+## THE DWELLS ARE TASTE, BUT THE TIMER IS A PERFORMANCE NUMBER, not a taste one:
+## `set_instance_color` dirties the whole instance buffer and a field chunk's
+## CUBE bucket carries several hundred boxes, so a head stays a Timer tick and
+## must never become a per-frame writer.
+const SIGNAL_DWELL_GREEN: float = 8.0
+const SIGNAL_DWELL_AMBER: float = 2.0
+const SIGNAL_DWELL_RED: float = 8.0
+
+
+static func signal_dwell(phase: int) -> float:
+	"""How long phase `phase` (0 green, 1 amber, 2 red) holds, seconds."""
+	match posmod(phase, 3):
+		0:
+			return SIGNAL_DWELL_GREEN
+		1:
+			return SIGNAL_DWELL_AMBER
+	return SIGNAL_DWELL_RED
 
 ## The per-head Timer's node name. It is a CHILD OF THE MARKER (which is a child of
 ## the chunk), so it is freed with the chunk like every other per-chunk node — and
@@ -714,6 +732,13 @@ const BIKE_PATH_MARKER_NAME: String = "BikePathMarker"
 ## index into `BikeNetwork.anchors()`) and `pos: Vector3` (world).
 const BIKE_STAND_GROUP: String = "bike_stand"
 const BIKE_STAND_MARKER_NAME: String = "BikeStand"
+
+## Markers that carry at least one traffic head, for the red-light fine
+## (bead `godot-test1-7ami`): the rider finds heads by group the way
+## `try_mount_bike()` finds racks, and reads the lit lamp off each head's own
+## Timer meta — the Timer's own phase is the ONE source of truth for which lamp
+## is lit, never a second clock.
+const BIKE_SIGNAL_GROUP: String = "bike_signal"
 
 ## The rack's fixed geometry, never rolled: the rail the wheels lean against and
 ## the three uprights the locks go round.
@@ -2483,6 +2508,14 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 	var poles := PackedInt32Array()
 	var tops := PackedInt32Array()
 	var signals := PackedInt32Array()
+	# One stop record per head, parallel to `signals`: the strip point at the
+	# pole's station (`head_pos`, on the paint — the post itself stands
+	# `BIKE_POLE_OFFSET` aside and is not what a rider crosses) and the
+	# segment's direction there. Chunk-local `Vector2`s, mapped to the world
+	# through the marker's own transform by whoever reads them. Pure station
+	# geometry, no draw and no RNG, so the seed owns them exactly the way it
+	# owns the poles.
+	var signal_stops: Array = []
 	for i in range(stations.size() - 1):
 		var a: Vector2 = stations[i]["pos"]
 		var b: Vector2 = stations[i + 1]["pos"]
@@ -2653,6 +2686,7 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 			# cursor as it is now. `bike_path_selfcheck` check 9 asks the SHIPPED
 			# `_build_block_multimesh` where this lens really lands and compares.
 			signals.append(cube_cursor + 1)
+			signal_stops.append({"s": head_pos, "dir": (b - a).normalized()})
 			# The segment's own angle, not the station heading: the builders
 			# face their plates along it, and a lane carries its road
 			# station's heading, which runs off the chord on a bend (bead
@@ -2668,7 +2702,7 @@ static func _draw_path_share(terrain: Node3D, chunk_pos: Vector2i, centre: Vecto
 
 	return {
 		"segments": segments, "poles": poles, "tops": tops, "signals": signals,
-		"cube_cursor": cube_cursor,
+		"signal_stops": signal_stops, "cube_cursor": cube_cursor,
 	}
 
 
@@ -2710,6 +2744,9 @@ static func _make_marker(terrain: Node3D, origin: Vector2i, built: Dictionary,
 	# read both, and `.3` gets the path's ends the same way.
 	marker.set_meta("tops", built["tops"])
 	marker.set_meta("signals", built["signals"])
+	marker.set_meta("signal_stops", built["signal_stops"])
+	if not (built["signals"] as PackedInt32Array).is_empty():
+		marker.add_to_group(BIKE_SIGNAL_GROUP)
 	parent_chunk.add_child(marker)
 	_plant_signal_timers(terrain, marker, built["signals"])
 	return marker
@@ -3148,9 +3185,8 @@ static func _plant_signal_timers(terrain: Node3D, marker: Node3D,
 	THE PHASE IS THE FIRST WAIT and it is what staggers the heads for free: a
 	`set_instance_color` dirties the whole instance buffer of a bucket that carries
 	several hundred boxes on a field chunk, so what must never happen is every head
-	in view writing on one frame. With the dwell floored at `SIGNAL_DWELL_MIN` and
-	the phase uniform inside it, two heads landing on the same frame twice running
-	is not a thing this can do.
+	in view writing on one frame. With the phase uniform over the three dwells,
+	two heads landing on the same frame twice running is not a thing this can do.
 
 	PARENTED TO THE MARKER, which is parented to the chunk: freed with the chunk
 	like every other per-chunk node, and out of the chunk's own child list, which
@@ -3168,8 +3204,13 @@ static func _plant_signal_timers(terrain: Node3D, marker: Node3D,
 	for j in 3:
 		bright.append(lamp_color(terrain, j, true))
 		dim.append(lamp_color(terrain, j, false))
-	for base: int in signals:
-		var dwell: float = rng.randf_range(SIGNAL_DWELL_MIN, SIGNAL_DWELL_MAX)
+	for head_i in signals.size():
+		var base: int = signals[head_i]
+		# The head's own phase, rolled like the dwell it starts on: green ~8,
+		# amber ~2, red ~8 (`signal_dwell`), so a fresh chunk shows a spread of
+		# lamps rather than a wall of green.
+		var phase0: int = rng.randi_range(0, 2)
+		var dwell: float = signal_dwell(phase0)
 		var timer := Timer.new()
 		timer.name = SIGNAL_TIMER_NAME
 		timer.one_shot = false
@@ -3190,8 +3231,15 @@ static func _plant_signal_timers(terrain: Node3D, marker: Node3D,
 		timer.autostart = true
 		timer.wait_time = maxf(0.05, rng.randf() * dwell)
 		timer.set_meta("lamp0", base)
-		timer.set_meta("dwell", dwell)
-		timer.set_meta("phase", rng.randi_range(0, 2))
+		# Which head of this marker's `signal_stops` this Timer serves: the
+		# rider reads the stop line and the lit lamp off the same pair, so the
+		# phase below is the ONE source of truth for what this screen shows.
+		timer.set_meta("head", head_i)
+		timer.set_meta("phase", phase0)
+		# Not shown yet: every lens is dim until the first timeout writes the
+		# phase above. The rider skips unshown heads (below), so a fresh chunk
+		# never fines for a red nobody can see.
+		timer.set_meta("shown", false)
 		timer.set_meta("bright", bright)
 		timer.set_meta("dim", dim)
 		timer.timeout.connect(Callable(BikePaths, "tick_signal").bind(timer))
@@ -3218,9 +3266,15 @@ static func tick_signal(timer: Timer) -> void:
 		return
 	var phase: int = (int(timer.get_meta("phase", 0)) + 1) % 3
 	timer.set_meta("phase", phase)
-	# The first wait was the PHASE, a fraction of the dwell; every one after it is
-	# the dwell itself. Idempotent, so it costs nothing to write on every tick.
-	timer.wait_time = float(timer.get_meta("dwell", SIGNAL_DWELL_MIN))
+	# The first wait was the PHASE, a fraction of its dwell; every one after it
+	# is the new phase's own dwell (`signal_dwell`, never a second clock) —
+	# RESTARTED, not assigned: a repeating Timer schedules its next timeout
+	# before emitting, so assigning `wait_time` inside the callback only lands
+	# a cycle late (steady-state amber would hold 8 s and red 2 s). `start()`
+	# with the dwell restarts the countdown on it now. Idempotent, so it costs
+	# nothing to write on every tick.
+	timer.start(signal_dwell(phase))
+	timer.set_meta("shown", true)
 	write_lamps(mm, base, phase,
 			timer.get_meta("bright") as PackedColorArray,
 			timer.get_meta("dim") as PackedColorArray)
