@@ -1510,6 +1510,435 @@ func _check_claim_code_adopts_a_pasted_id() -> void:
 	Sentinel.done("claim_code_adopts_a_pasted_id")
 
 
+func _check_claim_401_signs_out() -> void:
+	"""
+	A 401 signs the profile out: the token AND the remembered address go, the
+	id stays.
+
+	The records-GET reply is the claim flow's own sync (an adoption refetches
+	through it), so the gate is probed HERE beside the adoption check: a fed
+	401 clears a held session while the player id is untouched, and a fed 200
+	keeps the session — feed-direct like the save verbs' probes, no network.
+	The per-verb matrix (every reply handler) is `save_selfcheck`'s 17b; this
+	is the claim-adjacent half the bead names.
+
+	NON-VACUOUS by named mutation: the gate dropped from `_on_get_completed`
+	leaves the session standing after its 401 — red below.
+	"""
+	var restore_url: String = BestRunStore.lobby_url_override
+	BestRunStore.lobby_url_override = SESSION_STUB_URL
+	var restore_override: int = BestRunStore.auth_available_override
+	BestRunStore.auth_available_override = 1
+	var store := BestRunStore.new()
+	root.add_child(store)
+	if not store.adopt_session(SESSION_PROBE_TOKEN):
+		_fail("setup: adoption refused — the 401 below proves nothing")
+		root.remove_child(store)
+		store.free()
+		BestRunStore.auth_available_override = restore_override
+		BestRunStore.lobby_url_override = restore_url
+		Sentinel.done("claim_401_signs_out")
+		return
+	var before: String = store.player_id()
+	store._on_get_completed(HTTPRequest.RESULT_SUCCESS, 401, PackedStringArray([]), PackedByteArray())
+	if not store.session_token().is_empty():
+		_fail("a 401 on the records GET left the session standing — the gate is skipped (M1)")
+	if store.player_id() != before:
+		_fail("a 401 moved the player id to %s — sign-out must keep the id" % store.player_id())
+	if store.session_email() != "":
+		_fail("a 401 kept the remembered address — sign-out clears token AND email")
+	if not store.adopt_session(SESSION_PROBE_TOKEN):
+		_fail("setup: re-adoption refused — the 200 below proves nothing")
+	store._on_get_completed(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray([]), "{}".to_utf8_buffer())
+	if store.session_token() != SESSION_PROBE_TOKEN:
+		_fail("a 200 records GET cleared the session — the gate is over-eager")
+	store.sign_out()
+	root.remove_child(store)
+	store.free()
+	BestRunStore.auth_available_override = restore_override
+	BestRunStore.lobby_url_override = restore_url
+	Sentinel.done("claim_401_signs_out")
+
+
+
+## The stub lobby the session probes sync against: refused connections fail
+## fast and silently, so every GET/POST/DELETE below starts (headers recorded)
+## and then dies async without reaching a production lobby.
+const SESSION_STUB_URL: String = "http://127.0.0.1:9"
+
+## A well-formed session token for the probes: 64 lowercase hex, the shape the
+## server mints. Built, not pasted, so a typo in the fixture cannot silently
+## become a shape probe of its own.
+const SESSION_PROBE_TOKEN: String = "ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12"
+
+
+## Counts `_request_get` starts, so the header probe can prove the busy retry
+## left exactly one extra GET — the `ClaimRetrySpy` shape, for sessions.
+class SessionRetrySpy extends BestRunStore:
+	var get_starts: int = 0
+	func _request_get() -> void:
+		get_starts += 1
+		super._request_get()
+
+
+## Counts every verb start, so the off-web probe can prove `fetch()` still
+## starts exactly the two GETs it starts today — no more, no fewer.
+class SessionCountSpy extends BestRunStore:
+	var starts: int = 0
+	func _request_get() -> void:
+		starts += 1
+		super._request_get()
+	func _request_save_get() -> void:
+		starts += 1
+		super._request_save_get()
+
+
+func _expect_cfg_session(wanted: String, when: String) -> void:
+	# Read the cfg FILE's `[player]` session back directly — through the store
+	# would only prove the store agrees with itself. This is the half that
+	# fails when only one of the two local layers was written (M3).
+	var cfg := ConfigFile.new()
+	if cfg.load(BestRunStore.config_path) != OK:
+		_fail("%s: the throwaway cfg would not load, so the [player] session proves nothing" % when)
+		return
+	var got := String(cfg.get_value(BestRunStore.CONFIG_PLAYER_SECTION, "session", ""))
+	if got != wanted:
+		_fail("%s: the cfg [player] session is %s, wanted %s" % [when, got, wanted])
+
+
+func _expect_cfg_session_email(wanted: String, when: String) -> void:
+	# The address's half of the same two-layer promise: it must survive the
+	# redirect/reload, so it is written beside the token, never kept in memory
+	# alone.
+	var cfg := ConfigFile.new()
+	if cfg.load(BestRunStore.config_path) != OK:
+		_fail("%s: the throwaway cfg would not load, so the [player] email proves nothing" % when)
+		return
+	var got := String(cfg.get_value(BestRunStore.CONFIG_PLAYER_SECTION, "email", ""))
+	if got != wanted:
+		_fail("%s: the cfg [player] email is %s, wanted %s" % [when, got, wanted])
+
+
+func _check_session_persists_both_layers() -> void:
+	"""
+	An adopted session survives the instance: `adopt_session()` on 64 hex is
+	true, `session_token()` reads it back, a FRESH store reads it back too,
+	and the cfg file's `[player]` session says it directly.
+
+	NON-VACUOUS by named mutation, each of which turns this RED: M1 (the shape
+	rule skipped) adopts the 63-char and non-hex probes; M2 (the cfg write
+	skipped) trips the cfg-file assertion; M3 (the cache never set) trips the
+	in-memory assertion — which reads the field itself, because on a fresh
+	store `session_token()` would lazily re-read the written layers and mask
+	exactly that bug. The sign-out control proves both layers empty on a fresh
+	store and `session_changed(false, "")` fired exactly once.
+	"""
+	var restore_url: String = BestRunStore.lobby_url_override
+	BestRunStore.lobby_url_override = SESSION_STUB_URL
+	var restore_override: int = BestRunStore.auth_available_override
+	BestRunStore.auth_available_override = 1
+	var store := BestRunStore.new()
+	root.add_child(store)
+	if not store.adopt_session(SESSION_PROBE_TOKEN):
+		_fail("adopt_session() refused a 64-hex token")
+	if store.session_token() != SESSION_PROBE_TOKEN:
+		_fail("after adoption session_token() is %s, wanted the adopted token" % store.session_token())
+	if store._session_token != SESSION_PROBE_TOKEN:
+		_fail("adoption wrote the layers but never set _session_token — the next verb still flies anonymous (M3)")
+	var fresh := BestRunStore.new()
+	root.add_child(fresh)
+	if fresh.session_token() != SESSION_PROBE_TOKEN:
+		_fail("a fresh store reads %s, wanted the adopted session" % fresh.session_token())
+	_expect_cfg_session(SESSION_PROBE_TOKEN, "adoption")
+
+	# NEGATIVE PROBES. Each must return false AND leave the held token in
+	# place — in memory and in the file. Uppercase hex is refused too: the
+	# server's `tokenRe` is lowercase-only, so adopting it would 401 every
+	# verb for the rest of this install's life.
+	for bad in ["", SESSION_PROBE_TOKEN.left(63), "zz".repeat(32), SESSION_PROBE_TOKEN.to_upper()]:
+		if store.adopt_session(bad):
+			_fail("adopt_session() adopted %s — the shape rule is skipped (M1)" % bad.left(20))
+	if store.session_token() != SESSION_PROBE_TOKEN:
+		_fail("a refused adoption moved the token to %s" % store.session_token())
+	_expect_cfg_session(SESSION_PROBE_TOKEN, "a refused adoption")
+
+	# THE SIGN-OUT CONTROL. Both layers empty on a fresh store, and the signal
+	# fired exactly once with the deliberate (empty) why.
+	var heard: Array = []
+	store.session_changed.connect(func(signed: bool, why: String) -> void: heard.append([signed, why]))
+	store.sign_out()
+	if heard != [[false, ""]]:
+		_fail("sign_out() announced %s, wanted exactly one (false, \"\")" % [heard])
+	var empty := BestRunStore.new()
+	root.add_child(empty)
+	if empty.session_token() != "":
+		_fail("sign-out left %s in the layers" % empty.session_token())
+	_expect_cfg_session("", "sign-out")
+	root.remove_child(empty)
+	empty.free()
+	root.remove_child(fresh)
+	fresh.free()
+	root.remove_child(store)
+	store.free()
+	BestRunStore.auth_available_override = restore_override
+	BestRunStore.lobby_url_override = restore_url
+	Sentinel.done("session_persists_both_layers")
+
+
+## Wait until every verb node of a store is free: the stub refuses fast, but
+## "fast" is still async, and a retry asserted while the boot GET is really in
+## flight would drop on ERR_BUSY instead of starting. A refused completion is
+## itself an early return (transport failure is silence), so settling moves no
+## flag — it only frees the nodes for the completion the probe then feeds by
+## hand, and later for the POST the probe submits. Fails (without aborting)
+## past the deadline so a stuck node cannot hang the suite.
+func _settle_verbs(store: BestRunStore) -> void:
+	var deadline := Time.get_ticks_msec() + 15000
+	while Time.get_ticks_msec() < deadline:
+		var busy := false
+		for node in [store._get_http, store._post_http, store._save_get_http, store._save_post_http, store._save_delete_http, store._auth_http]:
+			if node != null and (node as HTTPRequest).get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+				busy = true
+		if not busy:
+			return
+		await process_frame
+	_fail("the stub never freed the verb nodes — the retry below proves nothing")
+
+
+func _check_session_header_rides_every_verb() -> void:
+	"""
+	Signed in, the GET carries `X-Session: <tok>` and so does the POST; signed
+	out, the same two calls carry nothing. And an adoption that lands while
+	the boot GET is still in flight retries exactly once after that GET
+	completes, carrying the header — the busy overlap the claim probe owns for
+	player ids, here for sessions.
+
+	NON-VACUOUS by named mutation: M1 (`_auth_headers()` returns extra only)
+	trips every header pin below and leaves the retry headerless.
+	"""
+	var restore_url: String = BestRunStore.lobby_url_override
+	BestRunStore.lobby_url_override = SESSION_STUB_URL
+	var restore_override: int = BestRunStore.auth_available_override
+	BestRunStore.auth_available_override = 1
+	var spy := SessionRetrySpy.new()
+	root.add_child(spy)
+	spy.fetch()  # the boot GET: in flight for the rest of this frame, by construction
+	spy.adopt_session(SESSION_PROBE_TOKEN)
+	# The adoption's GET must have hit the busy boot GET (flag still armed)
+	# rather than starting alongside it.
+	if not spy._adopt_refetch_pending:
+		_fail("the adoption GET started instead of hitting the busy boot GET — the retry path was never exercised")
+	# The stub refuses the boot GET async (an early return: failure is silence,
+	# so the flag survives it) — settle first, then feed the completion by hand
+	# the way probe 3 feeds its replies. The feed spends the flag into exactly
+	# one retry on a free node.
+	await _settle_verbs(spy)
+	spy._on_get_completed(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray([]), "{}".to_utf8_buffer())
+	if spy._adopt_refetch_pending:
+		_fail("the busy adoption never retried after the pending GET completed")
+	# Boot, dropped adoption, then the retry — and the retry is the one extra
+	# STARTED request, which is why the recorded headers are its own.
+	if spy.get_starts != 3:
+		_fail("after a busy adoption the GETs started %d times, wanted 3 (boot, dropped, retry)" % spy.get_starts)
+	if spy._last_request_headers != PackedStringArray(["X-Session: " + SESSION_PROBE_TOKEN]):
+		_fail("the retry carries %s, wanted the X-Session header" % [spy._last_request_headers])
+	# The feed above also fires the catch-up POST (the shared layers hold the
+	# earlier checks' records, so the stub's zeroes read as behind — and that
+	# POST carries the header through the same `_auth_headers()`). Settle it
+	# and the retry away so the submitted POST below starts instead of
+	# dropping on the busy node and asserting its predecessor's headers.
+	await _settle_verbs(spy)
+	spy.submit(0, 0)
+	if spy._last_request_headers != PackedStringArray(["Content-Type: application/json", "X-Session: " + SESSION_PROBE_TOKEN]):
+		_fail("the signed-in POST carries %s, wanted content type AND the header" % [spy._last_request_headers])
+	root.remove_child(spy)
+	spy.free()
+
+	# THE SIGNED-OUT CONTROL: the same two calls, no header anywhere. Signed
+	# out first and on purpose — the layers are per-profile, so a fresh store
+	# would otherwise read the session above straight back (and should).
+	var anon := SessionRetrySpy.new()
+	root.add_child(anon)
+	anon.sign_out()
+	anon.fetch()
+	if not anon._last_request_headers.is_empty():
+		_fail("the anonymous GET carries %s, wanted nothing" % [anon._last_request_headers])
+	anon.submit(0, 0)
+	if anon._last_request_headers != PackedStringArray(["Content-Type: application/json"]):
+		_fail("the anonymous POST carries %s, wanted only its content type" % [anon._last_request_headers])
+	root.remove_child(anon)
+	anon.free()
+	BestRunStore.auth_available_override = restore_override
+	BestRunStore.lobby_url_override = restore_url
+	Sentinel.done("session_header_rides_every_verb")
+
+
+func _check_401_signs_out_and_says_why() -> void:
+	"""
+	A 401 carries the lobby's own expiry text into `session_changed(false,
+	why)` and empties the session; a 500 keeps it. Fed direct like the save
+	verbs' probes — the handlers are plain functions — on the records GET and
+	the slot GET alike.
+
+	NON-VACUOUS by named mutation: the 401 branch removed from either handler
+	leaves the token standing after its 401 — red below, per verb, by name.
+	"""
+	var restore_url: String = BestRunStore.lobby_url_override
+	BestRunStore.lobby_url_override = SESSION_STUB_URL
+	var restore_override: int = BestRunStore.auth_available_override
+	BestRunStore.auth_available_override = 1
+	var why := "Your sign-in has expired — send a new link"
+	var store := BestRunStore.new()
+	root.add_child(store)
+	var heard: Array = []
+	store.session_changed.connect(func(signed: bool, text: String) -> void: heard.append([signed, text]))
+	for handler in ["get", "save_get"]:
+		if not store.adopt_session(SESSION_PROBE_TOKEN):
+			_fail("setup: adoption refused — the %s 401 below proves nothing" % handler)
+			continue
+		heard.clear()
+		if handler == "get":
+			store._on_get_completed(HTTPRequest.RESULT_SUCCESS, 401,
+				PackedStringArray([]), ('{\u0022error\u0022:\u0022%s\u0022}' % why).to_utf8_buffer())
+		else:
+			store._on_save_get_completed(HTTPRequest.RESULT_SUCCESS, 401,
+				PackedStringArray([]), ('{\u0022error\u0022:\u0022%s\u0022}' % why).to_utf8_buffer())
+		if not store.session_token().is_empty():
+			_fail("a 401 on %s left the token standing — the gate is skipped" % handler)
+		if heard != [[false, why]]:
+			_fail("a 401 on %s announced %s, wanted exactly one (false, the server text)" % [handler, heard])
+		# The 500 control, per verb: an ordinary failure is silence, not a
+		# sign-out.
+		if not store.adopt_session(SESSION_PROBE_TOKEN):
+			_fail("setup: re-adoption refused — the %s 500 below proves nothing" % handler)
+			continue
+		heard.clear()
+		if handler == "get":
+			store._on_get_completed(HTTPRequest.RESULT_SUCCESS, 500,
+				PackedStringArray([]), PackedByteArray())
+		else:
+			store._on_save_get_completed(HTTPRequest.RESULT_SUCCESS, 500,
+				PackedStringArray([]), PackedByteArray())
+		if store.session_token() != SESSION_PROBE_TOKEN:
+			_fail("a 500 on %s cleared the token — the gate is over-eager" % handler)
+		if not heard.is_empty():
+			_fail("a 500 on %s spoke %s — failures stay silent" % [handler, heard])
+		store.sign_out()
+	root.remove_child(store)
+	store.free()
+	BestRunStore.auth_available_override = restore_override
+	BestRunStore.lobby_url_override = restore_url
+	Sentinel.done("401_signs_out_and_says_why")
+
+
+func _check_magic_link_refuses_bad_email() -> void:
+	"""
+	`request_magic_link("nope")` emits (false, "That does not look like an
+	email address") synchronously and starts no request; a good address stores
+	the email in both layers and starts a POST (the stub fails async — that is
+	fine, the probe only pins the start). After `sign_out()` the email is gone
+	from both layers.
+
+	NON-VACUOUS by named mutation: M4 (the shape rule skipped) emits true for
+	the garbage probe and starts its POST.
+	"""
+	var restore_url: String = BestRunStore.lobby_url_override
+	BestRunStore.lobby_url_override = SESSION_STUB_URL
+	var restore_override: int = BestRunStore.auth_available_override
+	BestRunStore.auth_available_override = 1
+	var store := BestRunStore.new()
+	root.add_child(store)
+	var heard: Array = []
+	store.magic_link_sent.connect(func(ok: bool, text: String) -> void: heard.append([ok, text]))
+	store.request_magic_link("nope")
+	if heard != [[false, "That does not look like an email address"]]:
+		_fail("a garbage address announced %s — the refusal must speak synchronously (M4)" % [heard])
+	if store._auth_http != null:
+		_fail("a refused address built the auth node — nothing may be sent")
+	# The minimal rule, not the strict one: one @ with non-empty sides, no
+	# whitespace, bounded. A dotless domain passes HERE — the server decides.
+	if not BestRunStore.is_valid_magic_email("a@b"):
+		_fail("the minimal rule refused a@b — the strict regex is back")
+	for bad in ["a b@c.de", "@c.de", "a@", "", "x".repeat(243) + "@example.com"]:
+		if BestRunStore.is_valid_magic_email(bad):
+			_fail("the minimal rule accepted %s" % bad.left(40))
+	heard.clear()
+	store.request_magic_link("  Pilot@Example.COM  ")
+	if not heard.is_empty():
+		_fail("a good address spoke %s synchronously — only the reply speaks" % [heard])
+	if store._session_email != "pilot@example.com":
+		_fail("the request kept %s, wanted the trimmed lowercase address" % store._session_email)
+	_expect_cfg_session_email("pilot@example.com", "the link request")
+	if store._auth_http == null:
+		_fail("a good address started no POST — the probe pins the start, not the reply")
+	if store._last_request_headers != PackedStringArray(["Content-Type: application/json"]):
+		_fail("the anonymous link POST carries %s, wanted only its content type" % [store._last_request_headers])
+	# The envelope, pinned pure: the address, the /auth/magic URL, no redirect.
+	var ask := store._magic_link_envelope()
+	if not String(ask["url"]).ends_with("/auth/magic"):
+		_fail("the link POST hits %s, wanted /auth/magic" % String(ask["url"]))
+	var sent_body: Variant = JSON.parse_string(String(ask["body"]))
+	if not (sent_body is Dictionary) or String(sent_body.get("email", "")) != "pilot@example.com":
+		_fail("the link POST body is %s, wanted {\"email\": …}" % String(ask["body"]))
+	# The sign-out control: the email goes with the token, from both layers.
+	# (The link POST is still in flight to the stub — its node answers ERR_BUSY
+	# to the sign-out DELETE, which the swallow path eats by design.)
+	store.sign_out()
+	var empty := BestRunStore.new()
+	root.add_child(empty)
+	if empty.session_email() != "":
+		_fail("sign-out left %s showing" % empty.session_email())
+	_expect_cfg_session_email("", "sign-out")
+	root.remove_child(empty)
+	empty.free()
+	root.remove_child(store)
+	store.free()
+	BestRunStore.auth_available_override = restore_override
+	BestRunStore.lobby_url_override = restore_url
+	Sentinel.done("magic_link_refuses_bad_email")
+
+
+func _check_url_session_off_web_is_noop() -> void:
+	"""
+	Off-web the URL take is a no-op and `fetch()` still starts exactly the two
+	GETs it starts today. The JS itself cannot run headless; the tripwire is
+	`intro_selfcheck`'s boolean scan plus a literal assertion that the snippet
+	strips the hash — the mutation that forgets `replaceState` is caught by
+	string, honestly labelled as such. The override is flipped inside this
+	probe, so M7 (the override ignored) goes vacuous nowhere: the control arms
+	assert the flip itself.
+	"""
+	var restore_url: String = BestRunStore.lobby_url_override
+	BestRunStore.lobby_url_override = SESSION_STUB_URL
+	var restore_override: int = BestRunStore.auth_available_override
+	BestRunStore.auth_available_override = 0
+	if BestRunStore.auth_available():
+		_fail("auth_available() answers true with the override at 0 — the override is ignored (M7)")
+	BestRunStore.auth_available_override = 1
+	if not BestRunStore.auth_available():
+		_fail("auth_available() answers false with the override at 1 — the override is ignored (M7)")
+	BestRunStore.auth_available_override = 0
+	var store := BestRunStore.new()
+	root.add_child(store)
+	if store.take_session_from_url() != "":
+		_fail("the URL take answered off-web — the bridge must stay untouched")
+	var spy := SessionCountSpy.new()
+	root.add_child(spy)
+	spy.fetch()
+	if spy.starts != 2:
+		_fail("fetch() started %d verbs off-web, wanted exactly the two GETs" % spy.starts)
+	if not BestRunStore.URL_SESSION_SNIPPET.contains("replaceState"):
+		_fail("the take snippet lost its hash-strip — a replayed reload would re-adopt")
+	root.remove_child(spy)
+	spy.free()
+	root.remove_child(store)
+	store.free()
+	BestRunStore.auth_available_override = restore_override
+	BestRunStore.lobby_url_override = restore_url
+	Sentinel.done("url_session_off_web_is_noop")
+
+
+
 func _check_phase_echo_refunds_a_wall_pass() -> void:
 	"""
 	Primm's Phase Echo pays out for going THROUGH something, and the wall is
@@ -2517,6 +2946,12 @@ func _run() -> void:
 	_check_ranks_merge_is_monotone()
 	_check_ranks_survive_a_relaunch()
 	await _check_claim_code_adopts_a_pasted_id()
+	await _check_claim_401_signs_out()
+	await _check_session_persists_both_layers()
+	await _check_session_header_rides_every_verb()
+	await _check_401_signs_out_and_says_why()
+	await _check_magic_link_refuses_bad_email()
+	await _check_url_session_off_web_is_noop()
 	_check_every_selfcheck_is_hermetic()
 	await _check_streak_does_not_inflate_lifetime()
 	await _check_skill_effects_on_player()

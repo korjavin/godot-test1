@@ -86,6 +86,21 @@ class_name BestRunStore
 ## read as no-save); the envelope stamp is never trusted. A POST racing the boot
 ## GET cannot corrupt it: adoption needs a STRICTLY newer stamp, so our own echo
 ## (equal stamp) is ignored.
+## SIGNED-IN IDENTITY (epic godot-test1-i8yu, bead .7): the session is the
+## lobby's proof that this browser verified an email — 64 hex minted
+## server-side, kept beside the player id in BOTH local layers (`ck_session` /
+## `[player]` session, the typed address in `ck_session_email` /
+## `[player]` email), and carried as `X-Session` on every /best and /save
+## request. `player_id()` stays the anon id and is STILL SENT as `?id=`: the
+## SERVER resolves the two (the first authed request links anon -> sub), so
+## the client never merges, never computes, never shows anything but the typed
+## address. The redirect/reload of the tab is acceptable ONLY because .2's
+## close-write saved the slot first and .5's boot GET brings the server copy
+## back. Ceiling: 30-day fixed expiry, web only — a 401 signs out and says
+## why, and the next link starts over. Against a lobby without /auth/* the
+## flow degrades to anonymous: the header is absent, the take is "", a send
+## refuses honestly with "Cannot reach the lobby".
+##
 ##
 ## IT ALSO CARRIES THE META-PROGRESSION COUNTERS (`lifetime_coins` /
 ## `spent_points`), and that is reuse rather than scope creep: they are keyed by
@@ -299,6 +314,33 @@ const PLAYER_ID_HEX_LEN: int = 32
 ## both tightened together; minted ids are `%08x` lowercase and always match.
 const PLAYER_ID_PATTERN: String = "^[0-9a-fA-F]{32}$"
 
+## The session's two local keys (bead `godot-test1-i8yu.7.2`): `localStorage`
+## on web, `[player]` in the cfg everywhere — the same section as the id, no
+## new section and no new user:// path, so the hermetic audit in
+## `progression_selfcheck` and `Sentinel.REAL_PATHS` need no change.
+const LS_SESSION: String = "ck_session"
+const LS_SESSION_EMAIL: String = "ck_session_email"
+
+## The session token's EXACT shape: 32 random bytes as 64 lowercase hex, minted
+## server-side (`server/auth.go`'s `tokenRe`). Anything else reads as signed
+## out — and is cleared from both layers, the re-mint idiom.
+const SESSION_PATTERN: String = "^[0-9a-f]{64}$"
+
+## The header every /best and /save request carries while signed in.
+const SESSION_HEADER: String = "X-Session"
+
+## The longest address the client sends: the server's `maxEmailLen`, so a
+## longer typed address is refused HERE instead of 400ing a request for it.
+const MAX_EMAIL_LEN: int = 254
+
+## The URL-hash take, as one JS string (bead `godot-test1-i8yu.7.2`): read
+## `session=<64 hex>` off `location.hash`, strip the hash in the SAME call
+## with `history.replaceState` so a later `location.reload()`
+## (`build_version.gd`) cannot replay it, and answer the session or "". A
+## STRING either way, never a boolean — the bridge corrupts booleans into dead
+## Variants, and `intro_selfcheck`'s all-scripts scan covers this const.
+const URL_SESSION_SNIPPET: String = "(function(){try{var m=(location.hash||'').match(/session=([0-9a-f]{64})/);if(!m){return '';}history.replaceState(null,'',location.pathname+location.search);return m[1];}catch(e){return '';}})()"
+
 ## `HTTPRequest`'s default timeout is *wait forever*, and a stuck request makes
 ## every later one on that node answer ERR_BUSY — the trap `lobby_client.gd`
 ## documents at length. Short, because nothing waits on these.
@@ -323,6 +365,18 @@ signal progression_loaded(lifetime_coins: int, spent_points: int)
 ## start card listens while it still shows and flips PLAY to CONTINUE; a late
 ## listener re-reads through `save_slot()` / `has_save()`.
 signal save_loaded
+
+## The sign-in state moved: (true, "") on adoption, (false, why) on sign-out —
+## the why names the cause (the 401 text, or "" for a deliberate sign-out) so
+## the panel can say it where the player reads send outcomes too.
+signal session_changed(signed_in: bool, why: String)
+
+## The /auth/magic reply: (true, "") when the link is on its way, (false, why)
+## otherwise — why is the server's error text, or the transport text when the
+## lobby never answered. Emitted synchronously off the request call for a
+## refused address (nothing is sent), async off the reply otherwise.
+signal magic_link_sent(ok: bool, why: String)
+
 
 # =============================================================================
 # STATE
@@ -422,6 +476,33 @@ var _last_save_verb: String = ""
 ## advanced meanwhile.
 var _save_post_sent_at: int = 0
 
+## The exact headers the last request STARTED with, per instance: observability
+## for `save_selfcheck`, beside `_last_save_verb` and with its rule — recorded
+## only when `request()` accepted the request, so the spy pins the bearer the
+## lobby actually received instead of the intent.
+var _last_request_headers: PackedStringArray = []
+
+## The auth verbs' own node (bead `godot-test1-i8yu.7.2`): node-per-verb, as
+## the save split — one node for BOTH auth verbs is fine, they never overlap in
+## practice (a link is requested from a signed-out panel, a sign-out from a
+## signed-in one), and sharing it with a record verb would ERR_BUSY-drop the
+## link behind a checkpoint push. Same timeout, same silent rule.
+var _auth_http: HTTPRequest = null
+
+## The session token cache, read lazily like `_player_id`: "" is signed out —
+## a fresh install, or a 401 since — and every verb sends `X-Session` while one
+## is held, so anonymous traffic is byte-for-byte what it was before this ring
+## existed. The token IS the session: the lobby minted it for the verified
+## click, and the client never computes anything from it — it only carries it.
+var _session_token: String = ""
+
+## The address the player typed, CLIENT-SIDE ONLY: written to both layers by
+## `request_magic_link()` on a valid address — never by a reply — so it
+## survives the redirect/reload the verified click arrives on, and "" for a
+## session with no request behind it. Shown, never sent (except in the one
+## /auth/magic POST that asked for the link).
+var _session_email: String = ""
+
 ## Whether the boot GET's reply may be trusted as a PRE-SUBMIT baseline — which is
 ## the only thing `server_best_distance` is for, and the one property the two
 ## `HTTPRequest` nodes above take away. They overlap on purpose (that is the whole
@@ -454,6 +535,13 @@ func fetch() -> void:
 	_read_local()
 	loaded.emit(distance, coins)
 	progression_loaded.emit(lifetime_coins, spent_points)
+	# The verified click lands in the URL hash: take it BEFORE the boot GETs,
+	# so the very first pair already runs under the session and the server
+	# links anon -> sub on it. Quiet (no nested fetch) — the pair below is the
+	# adoption's one GET pair.
+	var fresh := take_session_from_url()
+	if not fresh.is_empty():
+		_adopt_session_quiet(fresh)
 	_request_get()
 	_request_save_get()
 
@@ -1273,7 +1361,8 @@ func _request_get() -> void:
 		_get_http = HTTPRequest.new()
 		_get_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_get_http)
-	var err: int = _get_http.request(_endpoint())
+	var headers := PackedStringArray(_auth_headers())
+	var err: int = _get_http.request(_endpoint(), headers)
 	if err != OK:
 		# ERR_BUSY is an ordinary overlap and says nothing — with ONE exception:
 		# an adoption's fetch dropped here is the adopted id never syncing while
@@ -1286,6 +1375,7 @@ func _request_get() -> void:
 			_adopt_refetch_pending = false
 		return
 	_adopt_refetch_pending = false
+	_last_request_headers = headers
 	# The window opens here and closes in the reply handler; a POST inside it is
 	# what closes the baseline. See `_get_baseline_ok`.
 	_get_in_flight = true
@@ -1304,6 +1394,8 @@ func _on_get_completed(
 	# Closed FIRST, above every early return: a GET that failed is still no longer
 	# outstanding, and a POST after it races nothing.
 	_get_in_flight = false
+	if _reject_if_signed_out(response_code, body):
+		return
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		return
 	var json := JSON.new()
@@ -1393,9 +1485,12 @@ func _request_post() -> void:
 		# dropped POST costs nothing but a round of cross-device sync.
 		"found": found_landmark_ids(),
 	})
+	var headers := _auth_headers(PackedStringArray(["Content-Type: application/json"]))
 	var err: int = _post_http.request(
-		_endpoint(), ["Content-Type: application/json"], HTTPClient.METHOD_POST, body
+		_endpoint(), headers, HTTPClient.METHOD_POST, body
 	)
+	if err == OK:
+		_last_request_headers = headers
 	if err == OK and _get_in_flight:
 		# This run's numbers are now on their way to a lobby whose reply to the boot
 		# GET has not been read yet, so that reply may echo them back. Retire the
@@ -1406,6 +1501,19 @@ func _request_post() -> void:
 	# here costs only the cross-device half — but it must not be invisible.
 	if err != OK and err != ERR_BUSY:
 		push_warning("BestRunStore: /best POST could not start (%d)" % err)
+	if err == OK:
+		_post_http.request_completed.connect(_on_post_completed, CONNECT_ONE_SHOT)
+
+
+func _on_post_completed(
+	result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray
+) -> void:
+	"""The /best POST's reply is read for ONE reason: the 401 gate. Anything
+	else is the existing silence — the POST path never adopted a reply and
+	starts now only to learn the session died.
+	"""
+	if _reject_if_signed_out(response_code, body):
+		return
 
 # ---------------------------------------------------------------------------
 # SAVE SYNC — GET at boot, POST on push, DELETE on clear (see the banner)
@@ -1420,11 +1528,13 @@ func _request_save_get() -> void:
 		_save_get_http = HTTPRequest.new()
 		_save_get_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_save_get_http)
-	if _save_get_http.request(_save_endpoint()) != OK:
+	var headers := PackedStringArray(_auth_headers())
+	if _save_get_http.request(_save_endpoint(), headers) != OK:
 		return
 	# Recorded only on a started request: the check pins the verb the lobby
 	# actually received, not the intent.
 	_last_save_verb = "GET"
+	_last_request_headers = headers
 	_save_get_http.request_completed.connect(_on_save_get_completed, CONNECT_ONE_SHOT)
 
 
@@ -1441,6 +1551,8 @@ func _on_save_get_completed(
 	write pushes ours. Only a STRICTLY newer server copy replaces the local
 	slot, and only that emits `save_loaded` — once per adopted reply.
 	"""
+	if _reject_if_signed_out(response_code, body):
+		return
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		return
 	var json := JSON.new()
@@ -1495,8 +1607,9 @@ func push_save_slot() -> void:
 		_save_post_http = HTTPRequest.new()
 		_save_post_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_save_post_http)
+	var headers := _auth_headers(PackedStringArray(["Content-Type: application/json"]))
 	if _save_post_http.request(
-		_save_endpoint(), ["Content-Type: application/json"], HTTPClient.METHOD_POST, out
+		_save_endpoint(), headers, HTTPClient.METHOD_POST, out
 	) != OK:
 		return
 	# Both set only on a started request: on ERR_BUSY the baseline must keep
@@ -1505,6 +1618,7 @@ func push_save_slot() -> void:
 	# (round 1 MAJOR 2).
 	_save_post_sent_at = sent_at
 	_last_save_verb = "POST"
+	_last_request_headers = headers
 	_save_post_http.request_completed.connect(_on_save_post_completed, CONNECT_ONE_SHOT)
 
 
@@ -1518,6 +1632,8 @@ func _on_save_post_completed(
 	(including our own echo) — is ignored, silently and without a signal: the
 	write path never flips the card.
 	"""
+	if _reject_if_signed_out(response_code, body):
+		return
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		return
 	var json := JSON.new()
@@ -1552,15 +1668,336 @@ func _request_save_delete() -> void:
 		_save_delete_http = HTTPRequest.new()
 		_save_delete_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_save_delete_http)
-	if _save_delete_http.request(_save_endpoint(), [], HTTPClient.METHOD_DELETE) == OK:
+	var headers := PackedStringArray(_auth_headers())
+	if _save_delete_http.request(_save_endpoint(), headers, HTTPClient.METHOD_DELETE) == OK:
 		_last_save_verb = "DELETE"
+		_last_request_headers = headers
+		_save_delete_http.request_completed.connect(_on_save_delete_completed, CONNECT_ONE_SHOT)
 		return
 	if _save_post_http == null:
 		_save_post_http = HTTPRequest.new()
 		_save_post_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_save_post_http)
-	# No reply handler: the answer to a clear is nothing, and an empty blob
-	# decodes as no-save anyway.
-	if _save_post_http.request(_save_endpoint(), ["Content-Type: application/json"],
+	# The fallback POST's reply is read through the save-post handler: its
+	# adoption half finds an empty blob and ignores it, while the 401 half
+	# signs out a dead session instead of leaving it standing.
+	var post_headers := _auth_headers(PackedStringArray(["Content-Type: application/json"]))
+	if _save_post_http.request(_save_endpoint(), post_headers,
 			HTTPClient.METHOD_POST, JSON.stringify({"blob": "", "saved_at": 0})) == OK:
 		_last_save_verb = "DELETE"
+		_save_post_http.request_completed.connect(_on_save_post_completed, CONNECT_ONE_SHOT)
+		_last_request_headers = post_headers
+
+
+# ==============================================================================
+# ==============================================================================
+
+
+func _on_save_delete_completed(
+	result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray
+) -> void:
+	"""The clear's reply is read for ONE reason: the 401 gate — a clear that
+	lands on a dead session must still sign out. Anything else is the existing
+	fire-and-forget silence.
+	"""
+	if _reject_if_signed_out(response_code, body):
+		return
+# AUTH RING — magic-link sign-in (bead godot-test1-i8yu.7.2)
+# ==============================================================================
+## Passwordless sign-in for the web export, where there is no keyboard to type
+## a claim code with: the player enters an email, the lobby mails a link, and
+## opening it on the game machine 302s the tab back with `#session=<64 hex>` —
+## which `fetch()` takes and strips at boot. The token IS the session: the
+## lobby minted it for that verified click, so holding it is signed in. The
+## address remembered is the one the current link went to (written by the
+## request, never by a reply); a session with no request behind it signs in
+## with no address to show.
+##
+## The store never touches UI — every outcome reads off state or a signal:
+## `session_token()` for the header, `session_email()` for the row,
+## `session_changed` for the transitions, `magic_link_sent` for the send. The
+## panel speaks; the store only ever forgets (401, sign-out).
+
+
+## Web-only gate with a test seam: -1 asks the platform, 0/1 force it. The
+## panel and the store both read `auth_available()` — never `OS.has_feature`
+## directly for this flow — so a headless check forces 1 to reach the web rows
+## and 0 for the control.
+static var auth_available_override: int = -1
+
+
+static func auth_available() -> bool:
+	"""Whether the magic-link flow may start: the web export, or a forced row."""
+	if auth_available_override >= 0:
+		return auth_available_override == 1
+	return OS.has_feature("web")
+
+
+func session_token() -> String:
+	"""This session's token, "" when signed out. Cached like `_player_id`:
+	localStorage then the cfg `[player]` session (the id's migration idiom);
+	anything not matching `SESSION_PATTERN` reads as "" AND is cleared from
+	both layers, the re-mint idiom — garbage must not screen a later session.
+	"""
+	if not _session_token.is_empty():
+		return _session_token
+	var stored := ""
+	if OS.has_feature("web"):
+		stored = _ls_get(LS_SESSION)
+	if stored.is_empty():
+		var cfg := ConfigFile.new()
+		if cfg.load(config_path) == OK:
+			stored = str(cfg.get_value(CONFIG_PLAYER_SECTION, "session", ""))
+	if is_valid_session_token(stored):
+		_session_token = stored
+		return _session_token
+	if not stored.is_empty():
+		_clear_session_layers()
+	return ""
+
+
+func session_email() -> String:
+	"""The address the player typed, CLIENT-SIDE ONLY — for "Signed in as …".
+	"" when signed out. Shown, never sent (except in the one /auth/magic POST
+	that asked for the link). Lazily re-read from both layers, so the address
+	a pre-redirect request stored is still here on the fresh boot.
+	"""
+	if session_token().is_empty():
+		return ""
+	if not _session_email.is_empty():
+		return _session_email
+	if OS.has_feature("web"):
+		_session_email = _ls_get(LS_SESSION_EMAIL)
+	if _session_email.is_empty():
+		var cfg := ConfigFile.new()
+		if cfg.load(config_path) == OK:
+			_session_email = str(cfg.get_value(CONFIG_PLAYER_SECTION, "email", ""))
+	return _session_email
+
+
+static func is_valid_session_token(token: String) -> bool:
+	"""Whether `token` is shaped like a lobby-minted session: 64 lowercase
+	hex, strictly `SESSION_PATTERN` — the server's `tokenRe`, so anything else
+	is refused HERE instead of 401ing a request for it.
+	"""
+	var shape := RegEx.create_from_string(SESSION_PATTERN)
+	return shape != null and shape.search(token) != null
+
+
+static func is_valid_magic_email(address: String) -> bool:
+	"""Whether `address` may be sent: the same minimal rule as the server
+	(`server/auth.go`'s `validEmail` minus the `mail.ParseAddress` half the
+	client cannot run) — one `@` with non-empty sides, no whitespace, at most
+	`MAX_EMAIL_LEN`. Factored out so the request path and the panel cannot
+	drift apart: a second spelling of "valid" is a second outage.
+	"""
+	if address.is_empty() or address.length() > MAX_EMAIL_LEN:
+		return false
+	if address.contains(" ") or address.contains("\t") or address.contains("\n") or address.contains("\r"):
+		return false
+	var at := address.find("@")
+	if at <= 0 or at != address.rfind("@") or at >= address.length() - 1:
+		return false
+	return true
+
+
+func adopt_session(token: String) -> bool:
+	"""Adopt a lobby-minted session token: the shape refused (`false`, nothing
+	touched), otherwise BOTH local layers written (the `adopt_player_id`
+	idiom), the cache set, `session_changed(true, "")` emitted, then `fetch()`
+	— the first authed GET /best?id=<anon> is what makes the server link anon
+	→ sub, and the reply (sub's record) folds in through the ordinary monotone
+	path; /save's reply lands LWW through `_on_save_get_completed` as today.
+	Reuses `_adopt_refetch_pending` exactly as `adopt_player_id` does (the boot
+	GET may still be in flight).
+	"""
+	if not is_valid_session_token(token):
+		return false
+	_adopt_session_quiet(token)
+	# Armed until the adoption's GET actually starts (see `_request_get`): the
+	# same ERR_BUSY overlap the claim adoption documents there.
+	_adopt_refetch_pending = true
+	fetch()
+	return true
+
+
+func _adopt_session_quiet(token: String) -> void:
+	"""Adopt without fetching: the take inside `fetch()` uses this, and the
+	outer fetch's own GET pair is the adoption's one pair. Shape-guarded —
+	the snippet already matched it, but a second spelling of the take must not
+	become a way around the validator.
+	"""
+	if not is_valid_session_token(token):
+		return
+	_ls_set(LS_SESSION, token)
+	var cfg := ConfigFile.new()
+	cfg.load(config_path)  # keep every other section intact
+	cfg.set_value(CONFIG_PLAYER_SECTION, "session", token)
+	cfg.save(config_path)
+	_session_token = token
+	session_changed.emit(true, "")
+
+
+func request_magic_link(email: String) -> void:
+	"""Ask the lobby to mail a sign-in link to `email`. Trims and lowercases
+	(the server normalizes the same way); a refused address emits
+	`magic_link_sent(false, …)` synchronously and sends NOTHING. Otherwise the
+	address is stored in both layers NOW — it must survive the redirect/reload
+	the session arrives on — and POST `<origin>/auth/magic` with
+	`{"email": …}` goes out on `_auth_http`. Reply: 200 → (true, ""); 400/429/
+	503 with a JSON error → (false, that text); anything else → (false,
+	"Cannot reach the lobby"). No retry timer.
+	"""
+	var address := email.strip_edges().to_lower()
+	if not is_valid_magic_email(address):
+		magic_link_sent.emit(false, tr("That does not look like an email address"))
+		return
+	_store_session_email(address)
+	_request_magic_link()
+
+
+func _store_session_email(address: String) -> void:
+	"""Write the typed address to the cache and both layers."""
+	_session_email = address
+	_ls_set(LS_SESSION_EMAIL, address)
+	var cfg := ConfigFile.new()
+	cfg.load(config_path)  # keep every other section intact
+	cfg.set_value(CONFIG_PLAYER_SECTION, "email", address)
+	cfg.save(config_path)
+
+
+func _clear_session_layers() -> void:
+	"""Forget the token AND the email in both layers and both caches. Records
+	and the save slot are NOT touched: what is local stays local, exactly as
+	when the id changes.
+	"""
+	_session_token = ""
+	_session_email = ""
+	_ls_set(LS_SESSION, "")
+	_ls_set(LS_SESSION_EMAIL, "")
+	var cfg := ConfigFile.new()
+	cfg.load(config_path)  # keep every other section intact
+	cfg.set_value(CONFIG_PLAYER_SECTION, "session", "")
+	cfg.set_value(CONFIG_PLAYER_SECTION, "email", "")
+	cfg.save(config_path)
+
+
+func _magic_link_envelope() -> Dictionary:
+	"""The magic-link POST as data (`url`/`headers`/`body`): factored pure so
+	`save_selfcheck` pins the shape without sending anything. The header rides
+	exactly like the save verbs'.
+	"""
+	var headers := _auth_headers(PackedStringArray(["Content-Type: application/json"]))
+	var body := JSON.stringify({"email": _session_email})
+	return {"url": "%s/auth/magic" % _origin(), "headers": headers, "body": body}
+
+
+func _request_magic_link() -> void:
+	"""POST the sign-in link request. Own node, same silent rule as every verb:
+	the reply is read only to speak it through `magic_link_sent` — a sent link
+	needs nothing more, and the panel already said SENDING off the dispatch.
+	"""
+	if player_id().is_empty():
+		return
+	if _auth_http == null:
+		_auth_http = HTTPRequest.new()
+		_auth_http.timeout = REQUEST_TIMEOUT_SEC
+		add_child(_auth_http)
+	var ask := _magic_link_envelope()
+	if _auth_http.request(ask["url"], ask["headers"], HTTPClient.METHOD_POST, ask["body"]) != OK:
+		return
+	_last_request_headers = ask["headers"]
+	_auth_http.request_completed.connect(_on_magic_link_completed, CONNECT_ONE_SHOT)
+
+
+func _on_magic_link_completed(
+	result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray
+) -> void:
+	"""Speak the link request's reply through `magic_link_sent`: 200 is on its
+	way; a refusal carries the server's own error text; anything else (a lobby
+	too old for /auth/* included) is "Cannot reach the lobby" — an honest
+	refusal, not a crash. A 401 signs out first: the token died mid-run.
+	"""
+	if _reject_if_signed_out(response_code, body):
+		return
+	if result != HTTPRequest.RESULT_SUCCESS:
+		magic_link_sent.emit(false, tr("Cannot reach the lobby"))
+		return
+	if response_code == 200:
+		magic_link_sent.emit(true, "")
+		return
+	if response_code == 400 or response_code == 429 or response_code == 503:
+		magic_link_sent.emit(false, _auth_error_text(body, tr("Cannot reach the lobby")))
+		return
+	magic_link_sent.emit(false, tr("Cannot reach the lobby"))
+
+
+static func _auth_error_text(body: PackedByteArray, fallback: String) -> String:
+	"""The server's `{"error": …}` reason, or `fallback` when the body is not
+	one — a refusal must still say something honest on screen.
+	"""
+	var json := JSON.new()
+	if json.parse(body.get_string_from_utf8()) != OK or typeof(json.data) != TYPE_DICTIONARY:
+		return fallback
+	var reason := str((json.data as Dictionary).get("error", "")).strip_edges()
+	if reason.is_empty():
+		return fallback
+	return reason
+
+
+func sign_out(why: String = "") -> void:
+	"""Sign out: fire-and-forget DELETE `<origin>/auth/session` with the dying
+	header, then forget the token AND the email locally and emit
+	`session_changed(false, why)`. The header is built BEFORE the local state
+	goes; the send's outcome changes nothing (the server copy dies at expiry),
+	so its return — ERR_BUSY included — is swallowed. Records and the save
+	slot are NOT touched.
+	"""
+	var headers := _auth_headers()
+	_clear_session_layers()
+	if _auth_http == null:
+		_auth_http = HTTPRequest.new()
+		_auth_http.timeout = REQUEST_TIMEOUT_SEC
+		add_child(_auth_http)
+	_auth_http.request("%s/auth/session" % _origin(), headers, HTTPClient.METHOD_DELETE)
+	session_changed.emit(false, why)
+
+
+func take_session_from_url() -> String:
+	"""Take `#session=` off the page URL at boot and strip it in the same call
+	(`URL_SESSION_SNIPPET`). Web only — returns "" off-web WITHOUT touching
+	the bridge, so desktop and headless never eval. The answer is already
+	shape-checked by the snippet's own match; `fetch()` adopts it quietly.
+	"""
+	if not OS.has_feature("web"):
+		return ""
+	var answer: Variant = JavaScriptBridge.eval(URL_SESSION_SNIPPET, true)
+	return answer as String if typeof(answer) == TYPE_STRING else ""
+
+
+func _auth_headers(extra: PackedStringArray = []) -> PackedStringArray:
+	"""`extra` plus `X-Session: <token>` while signed in — the ONE header the
+	server's session middleware reads. Signed out this is `extra` alone, so
+	the anonymous boot GET and every other signed-out request send exactly
+	what they sent before this ring.
+	"""
+	var headers := PackedStringArray(extra)
+	var token := session_token()
+	if not token.is_empty():
+		headers.append("%s: %s" % [SESSION_HEADER, token])
+	return headers
+
+
+func _reject_if_signed_out(response_code: int, body: PackedByteArray) -> bool:
+	"""The 401 rule, in one place so the five sites cannot drift: a 401 means
+	the session died server-side, so `sign_out()` with the server's error text
+	when the body parses — else "Your sign-in has expired — send a new link" —
+	and the caller returns. True when it signed out, so handlers lead with
+	`if _reject_if_signed_out(...): return`. Silent otherwise, like every
+	failure in this file: the panel's status row repaints off the
+	`session_changed` signal, which is where the player reads it.
+	"""
+	if response_code != HTTPClient.RESPONSE_UNAUTHORIZED:
+		return false
+	sign_out(_auth_error_text(body, tr("Your sign-in has expired — send a new link")))
+	return true
