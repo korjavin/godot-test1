@@ -75,7 +75,7 @@ Phoboman's part tree retired with its generator at bead godot-test1-9k9n.3.
 | Audio (all synthesized) | `scripts/sound_manager.gd` | | `sound` |
 | Multiplayer mesh | `scripts/mp_manager.gd` | `mp_codec` (parsers) `mp_croc_sync` `mp_claims` `mp_world_sync` `lobby_client` `remote_avatar` `mp_ui` | `mp` `mp_codec` (split from mp_selfcheck; CI shards by file) |
 | Voice/video chat (web only) | `scripts/voice_chat.gd` `scripts/voice_js.gd` (the JS) | `web/vendor/mediapipe/` `scripts/fetch_vendor.sh` | `voice` |
-| Lobby server (Go) | `server/room.go` | `server/docker-compose.yml` | `go test` |
+| Lobby server (Go) | `server/room.go` | `server/docker-compose.yml` `auth.go` | `go test` |
 | Perf tooling | `scripts/perf_overlay.gd` (`\fo`) | `\fb` / `\fh` teleport cheats (debug builds) | `perf` |
 | CI | `.github/workflows/build.yml` | `scripts/selfcheck_shards.sh` `selfcheck_durations.json` | |
 | Art direction | `scenes/main.tscn` env, `scripts/toon_shading.gd` | `scenes/style_shots.tscn` (A/B tool) | |

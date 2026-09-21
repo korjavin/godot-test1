@@ -496,6 +496,31 @@ func _flash_blocked_feedback(slot: int = 0) -> void:
 	player._sfx("play_buzz")
 
 
+func nearest_bike_stand() -> Node3D:
+	"""The nearest `bike_stand` rack marker within reach (flat XZ), or null.
+
+	THE reach rule `try_mount_bike()` mounts by — one function, two readers
+	(the mount and the rack hint pad `bike_rack_hint.gd`), so a retuned radius
+	retunes both and a decoupled copy fails the hint probe's agreement. Reads
+	the marker's `pos` meta and hashes nothing, so no RNG stream moves."""
+	var best: Node3D = null
+	var best_d: float = player.BIKE_MOUNT_REACH
+	for stand: Node in player.get_tree().get_nodes_in_group("bike_stand"):
+		var spos: Vector3
+		if stand.has_meta("pos"):
+			spos = stand.get_meta("pos")
+		elif stand is Node3D:
+			spos = (stand as Node3D).global_position
+		else:
+			continue
+		var flat := Vector2(
+			spos.x - player.global_position.x, spos.z - player.global_position.z)
+		if flat.length() <= best_d:
+			best = stand as Node3D
+			best_d = flat.length()
+	return best
+
+
 func try_mount_bike() -> bool:
 	"""Rent the bike at the nearest `bike_stand` rack (bead godot-test1-z2yv.7).
 
@@ -513,21 +538,7 @@ func try_mount_bike() -> bool:
 	"""
 	if player.is_riding:
 		return false
-	var best: Node3D = null
-	var best_d: float = player.BIKE_MOUNT_REACH
-	for stand: Node in player.get_tree().get_nodes_in_group("bike_stand"):
-		var spos: Vector3
-		if stand.has_meta("pos"):
-			spos = stand.get_meta("pos")
-		elif stand is Node3D:
-			spos = (stand as Node3D).global_position
-		else:
-			continue
-		var flat := Vector2(
-			spos.x - player.global_position.x, spos.z - player.global_position.z)
-		if flat.length() <= best_d:
-			best = stand as Node3D
-			best_d = flat.length()
+	var best := nearest_bike_stand()
 	if best == null:
 		return false
 	if player.own_coins < player.BIKE_COIN_COST:

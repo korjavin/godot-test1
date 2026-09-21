@@ -95,6 +95,21 @@ leaving the room master-less.
   where it is dumped every 30 s; unset it and records live only as long as the
   container. Unlike the other routes this one also answers `OPTIONS`: the POST
   carries a JSON content type, so the browser preflights it.
+- `POST /auth/magic`, `GET /auth/verify?t=<token>`, `DELETE /auth/session` —
+  sign-in by magic link (server/auth.go). POST takes `{"email": …}` and mails a
+  single-use 15-minute link, or 429s past 10 links / 10 min per ip and 3 / 15
+  min per address (plus 429 past 10 unopened links per ip); POST needs the
+  `X-Real-Ip` proxy header Traefik sets (503 without it — local runs pass one
+  by hand); opening the link 302s to `AUTH_GAME_URL#session=<session>`
+  (30-day sessions, `DELETE /auth/session` signs out). Every `/best` and
+  `/save` request may carry `X-Session`: the first authed request naming an
+  anon `?id=` merges it into the session's sub once (records monotone, save
+  by stamp) and never again. The address is never stored — the key is
+  hex(sha256(lower(trim(address)))). Needs `SMTP_HOST` et al (503 without);
+  `LOBBY_AUTH_FILE` (default `/data/auth.json`) persists sessions + aliases,
+  pending tokens stay in memory; a corrupt file is kept as `auth.json.bad`
+  before the store starts empty. `AUTH_DEV_LOG_LINK=1` logs the link instead
+  of mailing — local end-to-end only, never production.
 - `GET /healthz` — `{"ok":true,"rooms":N}`.
 
 ## Running it locally
